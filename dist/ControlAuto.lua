@@ -2207,7 +2207,7 @@ end
 local HOME = {y0 = 19, rh = 18, vis = 9, scroll = 0}
 
 local function paint_home(gc)
-  titlebar(gc, "Control Automatico", "APN - examen")
+  titlebar(gc, "Control Automatico", "v3 - APN")
   -- alturas reales de las fuentes (evita superposiciones)
   gc:setFont("sansserif", "b", 10)
   local th = gc:getStringHeight("Ay")
