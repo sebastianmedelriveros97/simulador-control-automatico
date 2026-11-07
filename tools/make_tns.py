@@ -1,0 +1,139 @@
+#!/usr/bin/env python3
+"""
+make_tns.py - Empaqueta un script Lua en un documento TI-Nspire (.tns).
+
+Port en Python del formato que genera Luna (https://github.com/ndless-nspire/Luna,
+MPL 1.1, Olivier Armand): contenedor tipo ZIP con cabecera '*TIMLP0500',
+Problem1.xml comprimido (deflate crudo) y cifrado con 3DES en modo contador.
+
+Uso:  python3 make_tns.py entrada.lua salida.tns
+Requiere: python3 + paquete 'cryptography'.
+"""
+import struct
+import sys
+import zlib
+
+from cryptography.hazmat.decrepit.ciphers.algorithms import TripleDES
+from cryptography.hazmat.primitives.ciphers import Cipher, modes
+
+LUA_HEADER = (
+    b"\x54\x49\x58\x43\x30\x31\x30\x30\x2D\x31\x2E\x30\x3F\x3E\x3C\x70\x72"
+    b"\x6F\x62\x20\x78\x6D\x6C\x6E\x73\x3D\x22\x75\x72\x6E\x3A\x54\x49\x2E"
+    b"\x50\xA8\x5F\x5B\x1F\x0A\x22\x20\x76\x65\x72\x3D\x22\x31\x2E\x30\x22"
+    b"\x20\x70\x62\x6E\x61\x6D\x65\x3D\x22\x22\x3E\x3C\x73\x79\x6D\x3E\x0E"
+    b"\x01\x3C\x63\x61\x72\x64\x20\x63\x6C\x61\x79\x3D\x22\x30\x22\x20\x68"
+    b"\x31\x3D\x22\xF1\x00\x00\xFF\x22\x20\x68\x32\x3D\x22\xF1\x00\x00\xFF"
+    b"\x22\x20\x77\x31\x3D\x22\xF1\x00\x00\xFF\x22\x20\x77\x32\x3D\x22\xF1"
+    b"\x00\x00\xFF\x22\x3E\x3C\x69\x73\x44\x75\x6D\x6D\x79\x43\x61\x72\x64"
+    b"\x3E\x30\x0E\x03\x3C\x66\x6C\x61\x67\x3E\x30\x0E\x04\x3C\x77\x64\x67"
+    b"\x74\x20\x78\x6D\x6C\x6E\x73\x3A\x73\x63\x3D\x22\x75\x72\x6E\x3A\x54"
+    b"\x49\x2E\x53\xAC\x84\xF2\x2A\x41\x70\x70\x22\x20\x74\x79\x70\x65\x3D"
+    b"\x22\x54\x49\x2E\x53\xAC\x84\xF2\x2A\x41\x70\x70\x22\x20\x76\x65\x72"
+    b"\x3D\x22\x31\x2E\x30\x22\x3E\x3C\x73\x63\x3A\x6D\x46\x6C\x61\x67\x73"
+    b"\x3E\x30\x0E\x06\x3C\x73\x63\x3A\x76\x61\x6C\x75\x65\x3E\x2D\x31\x0E"
+    b"\x07\x3C\x73\x63\x3A\x73\x63\x72\x69\x70\x74\x20\x76\x65\x72\x73\x69"
+    b"\x6F\x6E\x3D\x22\x35\x31\x32\x22\x20\x69\x64\x3D\x22\x30\x22\x3E"
+    b"<![CDATA["
+)
+LUA_FOOTER = b"]]>\x0E\x08\x0E\x05\x0E\x02\x0E\x00"
+
+DEFAULT_DOCUMENT_XML = (
+    b"\x0F\xCE\xD8\xD2\x81\x06\x86\x5B\x4A\x4A\xC5\xCE\xA9\x16\xF2\xD5\x1D\xA8\x2F\x6E"
+    b"\x00\x22\xF2\xF0\xC1\xA6\x06\x77\x4D\x7E\xA6\xC0\x3A\xF0\x5C\x74\xBA\xAA\x44\x60"
+    b"\xCD\x58\xE6\x70\xD7\x40\xF6\x9C\x17\xDC\xF0\x94\x77\xBF\xCA\xDE\xF7\x02\x09\xC9"
+    b"\x62\xB1\x5D\xEF\x22\xFA\x51\x37\xA0\x81\x91\x48\xE1\x83\x4D\xAD\x08\x31\x2D\xD0"
+    b"\xD3\xE3\x2D\x60\xAB\x13\xC2\x98\x2B\xED\x39\x5B\x09\x24\x39\x92\x2F\x0C\x7A\x4C"
+    b"\x95\x74\x91\x3B\x0C\xF4\x60\xCC\x73\x27\xCB\x07\x7E\x7F\xA9\x17\x87\xE2\xAC\xA2"
+    b"\x3B\xCC\xA0\xC4\xE3\x8E\x89\xF0\xC0\x51\x9F\xC2\xBE\xCE\x28\x45\xC3\xD4\x11\x90"
+    b"\xA6\xEC\x53\xA0\xFB\x5B\x46\x6B\x41\xAD\xE9\x53\xBB\x97\xDB\xB1\xD2\x68\xE2\xF6"
+    b"\x36\x0F\x26\x36\x75\x9B\xE9\x1F\x48\xAD\xE9\x29\x67\x00\x58\x19\xC3\xC0\x12\x76"
+    b"\xA0\x4A\x73\xF3\xB1\xD3\x09\x18\xD6\x06\xDD\x97\x24\x53\x3E\x22\xA4\xFB\x82\x50"
+    b"\x7B\x7C\x12\x88\x4E\x7D\x41\x80\xFE\x72\x92\x29\x87\xE8\x5C\x56\x72\xFF\x29\x16"
+    b"\x8C\x42\x5B\x8B\x9B\xA7\xD2\x08\x6D\xD3\x98\xFF\x91\xA9\x9E\xF3\x93\xA8\x2E\x1C"
+    b"\xB2\xA9\x6B\x6A\xDF\xF6\xCE\x2D\x15\x17\xCE\x6E\xC0\x4F\x9A\x9C\x0E\xDF\x19\x8D"
+    b"\x2D\xFA\x69\x9F\x11\xD2\x20\x12\xE0\x79\x14\x04\x4E\x62\x8F\x0A\x2A\x18\x72\x5A"
+    b"\x8B\x80\xB3\x3C\x9B\xD5\x67\x59\x4B\x51\x4D\xE0\xC3\x38\x28\xC3\xDC\xCD\x39\x22"
+    b"\x12\x8C\x40\x55"
+)
+
+TIEN_CRYPTED_HEADER = (
+    b"\x0F\xCE\xD8\xD2\x81\x06\x86\x5B\x99\xDD\xA2\x3D\xD9\xE9\x4B\xD4\x31\xBB\x50\xB6"
+    b"\x4D\xB3\x29\x24\x70\x60\x49\x38\x1C\x30\xF8\x99\x00\x4B\x92\x64\xE4\x58\xE6\xBC"
+)
+
+K1 = bytes([0x16, 0xA7, 0xA7, 0x32, 0x68, 0xA7, 0xBA, 0x73])
+K2 = bytes([0xD9, 0xA8, 0x86, 0xA4, 0x34, 0x45, 0x94, 0x10])
+K3 = bytes([0x3D, 0x80, 0x8C, 0xB5, 0xDF, 0xB3, 0x80, 0x6B])
+IVEC_BASE = 0x6FE21307
+
+
+def doccrypt(data: bytes) -> bytes:
+    """XOR con flujo 3DES-EDE(k1,k2,k3) de un contador (simetrico)."""
+    # cryptography: TripleDES(k1+k2+k3) = E_k3(D_k2(E_k1(x))), igual que DES_ecb3_encrypt
+    enc = Cipher(TripleDES(K1 + K2 + K3), modes.ECB()).encryptor()
+    out = bytearray(data)
+    incr = 0
+    for blk in range(0, len(out), 8):
+        ctr = (IVEC_BASE + incr) & 0xFFFFFFFF
+        incr = (incr + 1) % 1024
+        ks = enc.update(b"\x00\x00\x00\x00" + struct.pack("<I", ctr))
+        for i in range(min(8, len(out) - blk)):
+            out[blk + i] ^= ks[i]
+    return bytes(out)
+
+
+def raw_deflate(data: bytes) -> bytes:
+    c = zlib.compressobj(zlib.Z_DEFAULT_COMPRESSION, zlib.DEFLATED, -15, 8)
+    return c.compress(data) + c.flush()
+
+
+def lua_to_problem(lua_src: bytes) -> bytes:
+    if lua_src.startswith(b"\xEF\xBB\xBF"):
+        lua_src = lua_src[3:]
+    lua_src = lua_src.replace(b"]]>", b"]]]]><![CDATA[>")
+    plain = LUA_HEADER + lua_src + LUA_FOOTER
+    return TIEN_CRYPTED_HEADER + doccrypt(raw_deflate(plain))
+
+
+def build_tns(entries, tiversion=0x0500) -> bytes:
+    """entries: lista de (nombre, datos, metodo). Formato zip de Luna."""
+    out = bytearray()
+    central = bytearray()
+    dos_date = (0 + 32 * 1 + 512 * 0) << 16  # tmz_date en cero -> 0x00200000
+    for idx, (name, data, method) in enumerate(entries):
+        nm = name.encode()
+        crc = zlib.crc32(data) & 0xFFFFFFFF
+        offset = len(out)
+        if idx == 0:
+            out += b"*TIMLP" + ("%04X" % tiversion).encode()
+        else:
+            out += struct.pack("<I", 0x04034B50)
+        out += struct.pack("<HHHIIIIHH", 20, 0, method, dos_date, crc,
+                           len(data), len(data), len(nm), 0)
+        out += nm + data
+        central += struct.pack("<IHHHHIIIIHHHHHII", 0x02014B50, 0, 20, 0, method,
+                               dos_date, crc, len(data), len(data), len(nm),
+                               0, 0, 0, 0, 0, offset)
+        central += nm
+    cd_pos = len(out)
+    out += central
+    out += struct.pack("<IHHHHIIH", 0x44504954, 0, 0, len(entries), len(entries),
+                       len(central), cd_pos, 0)
+    return bytes(out)
+
+
+def main():
+    if len(sys.argv) != 3:
+        print(__doc__)
+        sys.exit(1)
+    src = open(sys.argv[1], "rb").read()
+    tns = build_tns([
+        ("Document.xml", DEFAULT_DOCUMENT_XML, 0x0D),
+        ("Problem1.xml", lua_to_problem(src), 0x0D),
+    ])
+    open(sys.argv[2], "wb").write(tns)
+    print("OK -> %s (%d bytes)" % (sys.argv[2], len(tns)))
+
+
+if __name__ == "__main__":
+    main()
