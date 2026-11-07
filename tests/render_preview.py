@@ -30,6 +30,7 @@ class GC:
     def fillArc(self, *a): self._arc(*a, True)
     def getStringWidth(self, s): return self.d.textlength(s, font=self.f) / S
     def getStringHeight(self, s): return {7: 11, 9: 14, 10: 17}.get(self.sz, self.sz + 5)
+    def setPen(self, *a): pass
     def drawString(self, s, x, y, *_): self.d.text((x*S, y*S), s, fill=self.c, font=self.f)
 
 L = lua51.LuaRuntime(unpack_returned_tuples=True)
@@ -53,5 +54,13 @@ if __name__ == "__main__":
         g.on.arrowDown()
     g.on.enterKey()
     shot(out + "_res.png")
-    g.on.tabKey()
-    shot(out + "_graf.png")
+    n = 0
+    while True:
+        g.on.tabKey(); n += 1
+        gc = GC(); g.on.paint(gc)
+        # salir cuando vuelve a la pantalla de resultados
+        if n > 6: break
+        gc.img.save(out + "_graf%d.png" % n); print("->", out + "_graf%d.png" % n)
+        L.execute("") 
+        if g.__dict__ if False else False: pass
+        if n >= int(sys.argv[4]) if len(sys.argv) > 4 else n >= 1: break

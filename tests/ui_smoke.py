@@ -17,6 +17,7 @@ function GC:drawRect() end
 function GC:drawLine() end
 function GC:drawArc() end
 function GC:fillArc() end
+function GC:setPen() end
 function GC:getStringWidth(s) return #s * 6 end
 function GC:getStringHeight(s) return 13 end
 function GC:drawString(s, x, y) assert(type(s)=="string", "drawString no string"); DRAWN[#DRAWN+1] = s end
@@ -53,5 +54,15 @@ g.on.clearKey(); typ("4/((s+1)(s+2))")
 g.on.arrowDown(); g.on.clearKey(); typ("2"); g.on.arrowDown(); g.on.arrowDown(); g.on.clearKey(); typ("16.3"); g.on.enterKey()
 g.on.tabKey(); gr = paint(); assert any("plano" in x.lower() for x in gr), gr[:3]
 g.on.arrowDown(); paint(); g.on.tabKey(); paint()
+# recorrer todos los graficos y probar las teclas de envio
+g.on.tabKey(); g.on.tabKey(); paint(); g.on.tabKey(); paint()
+g.on.enterKey()   # grafico -> resultados
+g.on.charIn("6"); out6 = paint(); assert any("Frecuencia" in x for x in out6), out6[:3]
+g.on.tabKey(); paint(); g.on.tabKey(); paint(); g.on.tabKey(); paint()
+g.on.escapeKey(); g.on.escapeKey(); g.on.escapeKey()
+for d in "1234567890":
+    g.on.charIn(d); g.on.enterKey(); paint()
+    for _ in range(4): g.on.tabKey(); paint()
+    g.on.escapeKey(); g.on.escapeKey(); g.on.escapeKey()
 print("menu:", len(list(g.MENU.values())))
 print("OK UI")

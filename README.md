@@ -21,7 +21,7 @@ Requiere un SO 3.2 o superior. Cualquier TI-Nspire CX II cumple este requisito.
 
 | Tecla | Acción |
 |---|---|
-| `1`–`9` o flechas + `enter` | abrir un módulo |
+| `1`–`9`, `0` (módulo 10) o flechas + `enter` | abrir un módulo |
 | flechas ▲▼ / `tab` | cambiar de campo |
 | flechas ◄► | mover el cursor dentro del campo |
 | `del` / `clear` | borrar un carácter / vaciar el campo |
@@ -61,7 +61,9 @@ k/(s(s+1)(s+10))    10s/(s^2+4s+8)      1.309(1+1/(5s))
 | 6 | Frecuencia y márgenes | ωcg, MF, ωcf, MG (lineal y dB), ganancia crítica, Ku/Pu, estabilidad; \|G(jω)\|, ∠G(jω) y salida senoidal permanente. Admite retardo exacto | UT4 |
 | 7 | Localización de polos | polos deseados, ∠Gp(pd), deficiencia angular, **elección de estructura mínima** (P/PD/PI/PID) y su justificación, cero(s), Kc, formas ideal y paralela, verificación de polos de LC, error estacionario. Opción de PID algebraico con un tercer polo fijo | UT5 |
 | 8 | Sintonía empírica PI/PID | ZN lazo abierto, ZN lazo cerrado (Ku dato, relé `4d/(πa)` o calculado del modelo, también con dos constantes de tiempo), **Ho-Hang-Cao** (ωp, Kp, Ti, ωg, Td = τ2) y verificación de MF/MG con el **retardo exacto**; efecto de multiplicar Kp (ej. ×2) | UT7 |
-| 9 | Ayuda | teclas y sintaxis | |
+| 9 | Identificación (curva) | K, τ y L de un modelo de primer orden con retardo a partir de la curva de reacción (método de dos puntos 28,3 %/63,2 % o lectura con tangente); ZN inmediato y envío al módulo 8 | UT7 |
+| 10 | Entrenamiento | ejercicios aleatorios del tipo de las pruebas (8 tipos), corrección de sus respuestas y solución paso a paso | todas |
+| 11 | Ayuda | qué módulo usar según el enunciado, glosario, teclas y sintaxis | |
 
 Las fórmulas son las del **formulario del examen**: `ts,2% = 4/(ζωn)`,
 `ζ = −ln(Mp/100)/√(π²+ln²(Mp/100))`, Ho-Hang-Cao con MF en radianes y MG lineal,
@@ -83,6 +85,17 @@ Módulo 8 → `K = 2`, `τ = 9`, `L = 1.5`, `MG = 3`, `MF = 60`, `factor Kp = 2`
 - Ho-Hang-Cao: ωp = 1,047 rad/s; **Kp = 1,571; Ti = 9 s**; ωg = 0,349 rad/s
 - Verificación con el retardo exacto: ωcg = 0,349, **MF = 60°**; ωcf = 1,047, **MG = 3**
 - Con Kp × 2 (Ti fijo): MF = 30° y MG = 1,5. La respuesta es más rápida, pero la estabilidad relativa es menor
+
+### Resultados: respuestas, gráficos y envío entre módulos
+
+- Cada resultado empieza con un recuadro **RESPUESTAS** con lo que se escribe en la hoja; debajo va el **Desarrollo** paso a paso.
+- **`tab`** recorre los gráficos del resultado:
+  - **y(t)**: respuesta al escalón con Mp, tp y ts **reales** de la simulación exacta (módulos 1, 2, 3, 6 y 7). En los módulos 6 y 8, la simulación incluye el retardo exacto y compara los controladores HHC y ZN.
+  - **Bode** (módulo 6), con ωcg, ωcf, MF y MG marcados.
+  - **Lugar de raíces** (módulo 5 con `k`), con los cruces del eje jω y su k.
+  - **Plano s** (módulo 7).
+- **Teclas numéricas en el resultado**: envían el controlador o el modelo a otro módulo sin reescribirlo. Por ejemplo, en el módulo 7, `3` lleva a la respuesta LC y `6` a márgenes/Bode; en el módulo 9, `8` lleva a Sintonía.
+- **Entrenamiento (10)**: elija el `tipo` y el `nro` del ejercicio, presione enter para ver el enunciado, resuelva a mano, escriba r1..r3 y presione enter para corregir. Con `?` en r1 se muestra la solución.
 
 ### Gráfico del plano s (módulo 7)
 

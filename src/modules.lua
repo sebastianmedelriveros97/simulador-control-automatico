@@ -39,6 +39,71 @@ end
 local function add(L, s) L[#L + 1] = s end
 local function sep(L, t) L[#L + 1] = "== " .. t .. " ==" end
 
+-- graficos asociados al resultado (tecla tab)
+local function view(L, v) L.views = L.views or {}; L.views[#L.views + 1] = v end
+
+-- recuadro de respuestas al inicio del resultado
+local function summary(L, items)
+  local out = {"== RESPUESTAS =="}
+  for _, it in ipairs(items) do out[#out + 1] = it end
+  if L.chainhelp then
+    for _, h in ipairs(L.chainhelp) do out[#out + 1] = h end
+  end
+  out[#out + 1] = "== Desarrollo =="
+  for i = #out, 1, -1 do table.insert(L, 1, out[i]) end
+end
+
+-- enviar datos a otro modulo con una tecla numerica
+local function chain(L, key, target, vals, desc)
+  L.chain = L.chain or {}
+  L.chain[key] = {target = target, vals = vals}
+  L.chainhelp = L.chainhelp or {}
+  L.chainhelp[#L.chainhelp + 1] = "Tecla " .. key .. ": " .. desc
+end
+
+-- polinomio y racional en texto exacto (para reingresar en otro modulo)
+local function pexact(p)
+  local parts = {}
+  for i = #p, 1, -1 do
+    local c = p[i]
+    if c ~= 0 then
+      local e = i - 1
+      local cs = string.format("%.7g", c)
+      local term = cs .. ((e == 0) and "" or ((e == 1) and "*s" or ("*s^" .. e)))
+      parts[#parts + 1] = term
+    end
+  end
+  if #parts == 0 then return "0" end
+  return (table.concat(parts, "+"):gsub("%+%-", "-"))
+end
+local function rexact(R) return "(" .. pexact(R.n) .. ")/(" .. pexact(R.d) .. ")" end
+
+-- vista de respuesta al escalon de T (lazo ya cerrado), via fracciones parciales
+local function timeview(T, A, title, name)
+  local poles = proots(T.d)
+  local tmax = horizon(poles)
+  local ts, ys = stepresp(T, A, tmax, 300)
+  local st = isstable(poles)
+  local yss = (st and abs(T.d[1]) > 1e-12) and A * T.n[1] / T.d[1] or nil
+  local m = stepmetrics(ts, ys, yss)
+  local ymax = -INF
+  for i = 1, #ys do if ys[i] > ymax then ymax = ys[i] end end
+  local V = {kind = "time", title = title, ref = yss, band = yss ~= nil,
+    curves = {{t = ts, y = ys, name = name or "y(t)"}},
+    marks = {Mp = m.Mp, tp = m.tp, ymax = ymax, ts = m.ts2}}
+  return V, m, st
+end
+
+local function metricstext(m)
+  local t = {}
+  if m.Mp then t[#t + 1] = "Mp = " .. fmt(m.Mp, 4) .. " %" end
+  if m.tp then t[#t + 1] = "tp = " .. fmt(m.tp, 4) .. " s" end
+  if m.ts2 then t[#t + 1] = "ts2% = " .. fmt(m.ts2, 4) .. " s" end
+  if m.ts5 then t[#t + 1] = "ts5% = " .. fmt(m.ts5, 4) .. " s" end
+  if m.tr then t[#t + 1] = "tr = " .. fmt(m.tr, 4) .. " s" end
+  return table.concat(t, ", ")
+end
+
 local Z, W, WN, PHI, TAU, SIG, DEG, PM = U.zeta, U.w, U.wn, U.phi, U.tau, U.sigma, U.deg, U.pm
 
 --------------------------------------------------------------------------
@@ -162,6 +227,17 @@ local function m_specs(v)
   else
     add(L, "(ingrese ts, " .. WN .. " o tp para obtener polos y tiempos)")
   end
+  local S = {Z .. " = " .. fmt(z) .. "   Mp = " .. fmt(Mp_from_zeta(z), 4) .. " %"}
+  if wn then
+    S[#S + 1] = WN .. " = " .. fmt(wn) .. " rad/s,  " .. SIG .. " = " .. fmt(sig)
+    if z < 1 and wd then
+      S[#S + 1] = "pd = -" .. fmt(sig) .. " " .. PM .. " j" .. fmt(wd)
+      S[#S + 1] = "ts2% = " .. fmt(4 / sig, 4) .. " s, ts5% = " .. fmt(3 / sig, 4) .. " s, tp = " .. fmt(pi / wd, 4) .. " s, tr = " .. fmt((pi - math.acos(z)) / wd, 4) .. " s"
+    end
+    local V = timeview(rat({wn * wn}, {wn * wn, 2 * sig, 1}), 1, "2o orden estandar", "y(t) escalon unitario")
+    view(L, V)
+  end
+  summary(L, S)
   return L
 end
 
@@ -274,6 +350,20 @@ local function m_polos(v)
   sep(L, "Respuesta temporal")
   add(L, "Regla: si |Re| del siguiente polo " .. U.ge .. " 5" .. "\194\183" .. "|Re| del dominante, se desprecia (reduccion).")
   dyn_report(L, T, poles, zeros)
+  do
+    local V, m, st = timeview(T, A, (lazo == 1) and "Respuesta LC al escalon" or "Respuesta al escalon", "y(t), A = " .. fmt(A))
+    view(L, V)
+    local S = {((lazo == 1) and "GLC = " or "G = ") .. rstr(T), "Polos: " .. rootsstr(poles, 4), (stabilitytext(poles))}
+    if st and m.yss then
+      add(L, "== Simulacion exacta (fracciones parciales) ==")
+      add(L, "y(" .. U.inf .. ") = " .. fmt(m.yss) .. ";  " .. metricstext(m))
+      add(L, "(valores reales; las formulas de 2o orden son aproximaciones)")
+      S[#S + 1] = "Real: " .. metricstext(m)
+    end
+    chain(L, "4", 4, {Gc = v.Gc or "1", Gp = v.Gp, A = v.A or "1", k = v.k or ""}, "error estacionario de este lazo")
+    chain(L, "6", 6, {Gc = v.Gc or "1", Gp = v.Gp, k = v.k or "", L = "0"}, "margenes / Bode de este lazo")
+    summary(L, S)
+  end
   return L
 end
 
@@ -390,6 +480,30 @@ local function m_resp(v)
     add(L, "Sistema estable: ts(2%) " .. U.approx .. " 4/|Re dom| = " .. fmt(4 / abs(slow[1])) .. " s")
     if ent == 1 and abs(G.d[1]) > 1e-12 then add(L, "y(" .. U.inf .. ") = A" .. "\194\183" .. "G(0) = " .. fmt(A * G.n[1] / G.d[1])) end
   end
+  do
+    local tmax = horizon(gp)
+    local ts, ys = {}, {}
+    for i = 0, 300 do
+      local t = tmax * i / 300
+      ts[#ts + 1] = t
+      ys[#ys + 1] = evalpf(groups, t)
+    end
+    local yss = nil
+    if not diverge and ent == 1 and abs(G.d[1]) > 1e-12 then yss = A * G.n[1] / G.d[1] end
+    local m = stepmetrics(ts, ys, yss)
+    local ymax = -INF
+    for i = 1, #ys do if ys[i] > ymax then ymax = ys[i] end end
+    view(L, {kind = "time", title = "y(t)", ref = yss, band = yss ~= nil,
+      curves = {{t = ts, y = ys, name = "y(t) " .. (diverge and "(diverge)" or "")}},
+      marks = yss and {Mp = m.Mp, tp = m.tp, ymax = ymax, ts = m.ts2} or nil})
+    local S = {txt}
+    if diverge then S[#S + 1] = "INESTABLE: y(t) no alcanza estado estable"
+    else
+      if fast then S[#S + 1] = "Modo mas veloz: polo " .. fmtc(fast[1], fast[2], 4) .. ";  dominante: " .. fmtc(slow[1], slow[2], 4) end
+      if yss then S[#S + 1] = "y(" .. U.inf .. ") = " .. fmt(yss) .. ";  " .. metricstext(m) end
+    end
+    summary(L, S)
+  end
   return L
 end
 
@@ -461,6 +575,10 @@ local function m_error(v)
       add(L, "k = " .. fmt(kk, 6) .. "   " .. U.arrow .. " " .. st)
     end
     add(L, "Verifique luego con k en el campo k.")
+    local S = {}
+    for _, kk in ipairs(sols) do S[#S + 1] = "k = " .. fmt(kk, 6) end
+    if #S == 0 then S[1] = "sin solucion" end
+    summary(L, S)
     return L
   end
   local Gc = tf(v, "Gc", k, "1")
@@ -476,6 +594,12 @@ local function m_error(v)
   local e = sserrors(G0, A)
   errlines(L, e, A)
   add(L, "Parabola: r(t)=A t" .. U.sq .. "/2 (R=A/s" .. "\194\179" .. ")")
+  summary(L, {
+    "Tipo N = " .. e.N .. ";  lazo cerrado " .. (ok and "estable" or "NO estable"),
+    "Kp = " .. fmt(e.Kp) .. "  " .. U.arrow .. " ep (escalon) = " .. fmt(e.ep),
+    "Kv = " .. fmt(e.Kv) .. "  " .. U.arrow .. " ev (rampa) = " .. fmt(e.ev),
+    "Ka = " .. fmt(e.Ka) .. "  " .. U.arrow .. " ea (parabola) = " .. fmt(e.ea),
+  })
   return L
 end
 
@@ -489,6 +613,62 @@ local function charpoly(v, kk)
   end
   local G0 = rmul(tf(v, "Gc", kk, "1"), tf(v, "Gp", kk))
   return padd(G0.d, G0.n)
+end
+
+-- lugar de raices para P(s) = P0 + k P1, k > 0
+local function rlocus_view(P0, P1, bounds, kmark)
+  local olp, olz = proots(P0), proots(P1)
+  local kpos = {}
+  for _, b in ipairs(bounds or {}) do if b > 0 then kpos[#kpos + 1] = b end end
+  local kref = 1
+  for _, b in ipairs(kpos) do if b > kref then kref = b end end
+  local sc = 0
+  for i = 1, #P0 do sc = math.max(sc, abs(P0[i])) end
+  local s1 = 0
+  for i = 1, #P1 do s1 = math.max(s1, abs(P1[i])) end
+  local kmax = math.max(20 * kref, 100 * sc / math.max(s1, 1e-12))
+  local kmin = 1e-4 * math.min(kref, sc / math.max(s1, 1e-12))
+  local pts = {}
+  local prev = nil
+  local N = 160
+  for i = 0, N do
+    local kk = kmin * (kmax / kmin) ^ (i / N)
+    local r = proots(padd(P0, pscale(P1, kk)), prev)
+    prev = r
+    for _, q in ipairs(r) do pts[#pts + 1] = {q[1], q[2]} end
+  end
+  -- extension de la vista
+  local Rr = 1
+  for _, q in ipairs(olp) do Rr = math.max(Rr, abs(q[1]), abs(q[2])) end
+  for _, q in ipairs(olz) do Rr = math.max(Rr, abs(q[1]), abs(q[2])) end
+  local cross = {}
+  for _, kb in ipairs(kpos) do
+    local r = proots(padd(P0, pscale(P1, kb)))
+    for _, q in ipairs(r) do
+      if abs(q[1]) < 1e-4 * math.max(1, abs(q[2])) and q[2] > 1e-6 then
+        cross[#cross + 1] = {k = kb, w = q[2]}; Rr = math.max(Rr, q[2]); break
+      end
+    end
+  end
+  local lim = 2.2 * Rr
+  local xmin, xmax, ymax = -0.3 * Rr, 0.3 * Rr, 0.5 * Rr
+  for _, q in ipairs(pts) do
+    if abs(q[1]) <= lim and abs(q[2]) <= lim then
+      xmin = math.min(xmin, q[1]); xmax = math.max(xmax, q[1]); ymax = math.max(ymax, abs(q[2]))
+    end
+  end
+  local pad = 0.1 * Rr
+  local V = {kind = "rlocus", pts = pts, poles = olp, zeros = olz, cross = cross,
+    xmin = xmin - pad, xmax = xmax + pad, ymax = ymax + pad, R = Rr}
+  V.legend = {{"x rojo: polos LA (k=0)   o: ceros (k" .. U.arrow .. U.inf .. ")", "pp"}}
+  for _, c in ipairs(cross) do
+    V.legend[#V.legend + 1] = {"cruce eje j" .. U.w .. ": k = " .. fmt(c.k, 5) .. ", s = " .. U.pm .. "j" .. fmt(c.w, 4), "cz"}
+  end
+  if kmark then
+    V.kpoles = proots(padd(P0, pscale(P1, kmark)))
+    V.legend[#V.legend + 1] = {"azul: polos LC con k = " .. fmt(kmark), "pd"}
+  end
+  return V
 end
 
 local function m_routh(v)
@@ -540,6 +720,18 @@ local function m_routh(v)
       add(L, txt)
     end
     add(L, "(ingrese k para ver la tabla de Routh)")
+    local S = {}
+    for _, iv in ipairs(ivs) do
+      local a = (iv[1] == -INF) and ("-" .. U.inf) or fmt(iv[1], 6)
+      local b = (iv[2] == INF) and U.inf or fmt(iv[2], 6)
+      S[#S + 1] = "Estable para " .. a .. " < k < " .. b
+    end
+    if #S == 0 then S[1] = "Ningun k estabiliza el lazo" end
+    if lin then
+      local okv, V = pcall(rlocus_view, P0, d1, bounds, nil)
+      if okv then view(L, V); S[#S + 1] = "tab: lugar de raices" end
+    end
+    summary(L, S)
     return L
   end
   local P = charpoly(v, k)
@@ -569,6 +761,22 @@ local function m_routh(v)
   local roots = proots(P)
   add(L, "Raices: " .. rootsstr(roots))
   add(L, (stabilitytext(roots)))
+  do
+    local S = {"Cambios de signo en 1a columna: " .. ch, (stabilitytext(roots))}
+    if hask then
+      local P0, P1, P2 = charpoly(v, 0), charpoly(v, 1), charpoly(v, 2)
+      local d1 = psub(P1, P0)
+      local chk = psub(psub(P2, P0), pscale(d1, 2))
+      local lin = true
+      for i = 1, #chk do if abs(chk[i]) > 1e-9 * math.max(1, abs(P2[i] or 0)) then lin = false end end
+      if lin then
+        local _, bounds = krange(function(kk) return charpoly(v, kk) end)
+        local okv, V = pcall(rlocus_view, P0, d1, bounds, k)
+        if okv then view(L, V) end
+      end
+    end
+    summary(L, S)
+  end
   return L
 end
 
@@ -693,6 +901,62 @@ local function m_freq(v)
       add(L, "yss = " .. fmt(A * mag) .. " sin(" .. fmt(w) .. "t " .. (ph < 0 and "- " or "+ ") .. fmt(abs(ph)) .. DEG .. ")")
     end
   end
+  do
+    -- rango de frecuencias para el Bode
+    local ws = {}
+    if m.gc[1] then ws[#ws + 1] = m.gc[1].w end
+    if m.pc[1] then ws[#ws + 1] = m.pc[1].w end
+    for _, r in ipairs(o.p) do local a = sqrt(r[1] ^ 2 + r[2] ^ 2); if a > 1e-9 then ws[#ws + 1] = a end end
+    for _, r in ipairs(o.z) do local a = sqrt(r[1] ^ 2 + r[2] ^ 2); if a > 1e-9 then ws[#ws + 1] = a end end
+    if #ws == 0 then ws[1] = 1 end
+    local lo, hi = INF, 0
+    for _, x in ipairs(ws) do lo = math.min(lo, x); hi = math.max(hi, x) end
+    local l0, l1 = math.floor(math.log10(lo) - 1), math.ceil(math.log10(hi) + 1)
+    if l1 - l0 > 6 then l0 = l1 - 6 end
+    local lw, mg_, ph_ = {}, {}, {}
+    for i = 0, 200 do
+      local lwv = l0 + (l1 - l0) * i / 200
+      local mm, pp = freqat(o, 10 ^ lwv)
+      lw[#lw + 1] = lwv; mg_[#mg_ + 1] = (mm > 0) and db(mm) or -200; ph_[#ph_ + 1] = pp
+    end
+    local V = {kind = "bode", lw = lw, mag = mg_, ph = ph_, legend = {}}
+    if m.gc[1] then
+      V.wcg, V.phcg, V.MF = m.gc[1].w, m.gc[1].ph, m.gc[1].MF
+      V.legend[#V.legend + 1] = {"verde: " .. W .. "cg = " .. fmt(V.wcg, 4) .. " (|G0|=0 dB), MF = " .. fmt(V.MF, 4) .. DEG, "cz"}
+    end
+    if m.pc[1] then
+      V.wcf, V.magcf = m.pc[1].w, db(m.pc[1].mag)
+      V.legend[#V.legend + 1] = {"rojo: " .. W .. "cf = " .. fmt(V.wcf, 4) .. " (fase -180" .. DEG .. "), MG = " .. fmt(m.pc[1].MG, 4) .. " = " .. fmt(-V.magcf, 4) .. " dB", "pp"}
+    end
+    view(L, V)
+    -- respuesta al escalon del lazo cerrado
+    local S = {}
+    S[#S + 1] = m.gc[1] and (W .. "cg = " .. fmt(m.gc[1].w) .. " rad/s,  MF = " .. fmt(m.gc[1].MF, 4) .. DEG) or ("MF = " .. U.inf)
+    S[#S + 1] = m.pc[1] and (W .. "cf = " .. fmt(m.pc[1].w) .. " rad/s,  MG = " .. fmt(m.pc[1].MG, 4) .. " (" .. fmt(db(m.pc[1].MG), 4) .. " dB)") or ("MG = " .. U.inf)
+    S[#S + 1] = (mf > 0 and mg > 1) and "Lazo cerrado ESTABLE" or "Lazo cerrado INESTABLE"
+    if Ld == 0 then
+      local Vt, mt, st = timeview(closedloop(G0), 1, "Respuesta LC (escalon unitario)")
+      view(L, Vt)
+      if st and mt.yss then add(L, "Simulacion LC: y(" .. U.inf .. ") = " .. fmt(mt.yss) .. "; " .. metricstext(mt)) end
+    elseif #Gc.n <= #Gc.d and mf > 0 and mg > 1 then
+      local wc = m.gc[1] and m.gc[1].w or 1
+      local tmax = 20 / wc
+      local okc, ts, ys = pcall(simloop, Gc, Gp, Ld, 1, tmax, 3000)
+      if okc then
+        local yss = nil
+        local e = sserrors(G0, 1)
+        if e.N >= 1 then yss = 1 elseif e.N == 0 then yss = e.Kp / (1 + e.Kp) end
+        local mt = stepmetrics(ts, ys, yss)
+        local t2, y2 = decimate(ts, ys, 300)
+        local ymax = -INF
+        for i = 1, #ys do if ys[i] > ymax then ymax = ys[i] end end
+        view(L, {kind = "time", title = "Respuesta LC con retardo", ref = yss, band = yss ~= nil,
+          curves = {{t = t2, y = y2, name = "y(t) simulada (RK4)"}}, marks = {Mp = mt.Mp, tp = mt.tp, ymax = ymax, ts = mt.ts2}})
+        add(L, "Simulacion LC con retardo: " .. metricstext(mt))
+      end
+    end
+    summary(L, S)
+  end
   return L
 end
 
@@ -788,8 +1052,8 @@ local function m_place(v)
   local function dist(r) return sqrt((-sig - r[1]) ^ 2 + (wd - r[2]) ^ 2) end
   -- grafico del plano s (pantalla 2, tecla tab)
   local GREEK = {"\206\177", "\206\178", "\206\179", "\206\180", "\206\181", "\206\183", "\206\186", "\206\187", "\206\188", "\206\189"}
-  local plot = {sig = sig, wd = wd, items = {}, legend = {}}
-  L.plot = plot
+  local plot = {kind = "splane", sig = sig, wd = wd, items = {}, legend = {}}
+  view(L, plot)
   local gi = 0
   local pletters, zletters = {}, {}
   local function angitem(r, kind, desc)
@@ -941,12 +1205,56 @@ local function m_place(v)
   if e.ep > 0 and e.ep < INF then
     add(L, "y(" .. U.inf .. ") = 1 - ep = " .. fmt(1 - e.ep) .. " (escalon unitario)")
   end
+  do
+    local T = rat(pcopy(G0.n), padd(G0.d, G0.n))
+    local V, m, st = timeview(T, 1, "Respuesta LC con Gc (escalon unitario)")
+    view(L, V)
+    sep(L, "Paso 11: Comprobacion por simulacion")
+    add(L, "Respuesta exacta del lazo cerrado (incluye el efecto de los ceros):")
+    if st and m.yss then
+      add(L, "y(" .. U.inf .. ") = " .. fmt(m.yss) .. ";  " .. metricstext(m))
+      if Mp then add(L, "Mp real " .. fmt(m.Mp, 4) .. " % vs pedido " .. fmt(Mp) .. " %" .. ((m.Mp > Mp * 1.15 + 0.5) and "  (mayor: efecto del cero)" or "  " .. U.arrow .. " cumple aprox.")) end
+      if ts and m.ts2 then
+        local tsr = (crit == 5) and m.ts5 or m.ts2
+        if tsr then add(L, "ts real " .. fmt(tsr, 4) .. " s vs pedido " .. fmt(ts) .. " s") end
+      end
+    end
+    local gcs = fmt(Kc)
+    if nz == 1 then gcs = gcs .. "(s + " .. fmt(zc) .. ")" elseif nz == 2 then gcs = gcs .. "(s + " .. fmt(zc) .. ")" .. U.sq end
+    if useI then gcs = gcs .. "/s" end
+    local S = {"pd = -" .. fmt(sig) .. " " .. PM .. " j" .. fmt(wd) .. ";  " .. PHI .. "d = " .. fmt(phi, 4) .. DEG,
+      "Estructura: " .. names[nz] .. ";  Gc(s) = " .. gcs}
+    if useI and nz == 1 then S[#S + 1] = "Kp = " .. fmt(Kc) .. ",  Ti = " .. fmt(1 / zc) .. " s"
+    elseif useI and nz == 2 then S[#S + 1] = "Kp = " .. fmt(2 * Kc * zc) .. ",  Ti = " .. fmt(2 / zc) .. " s,  Td = " .. fmt(1 / (2 * zc)) .. " s"
+    elseif (not useI) and nz == 1 then S[#S + 1] = "Kp = " .. fmt(Kc * zc) .. ",  Td = " .. fmt(1 / zc) .. " s" end
+    S[#S + 1] = "Polos LC: " .. rootsstr(r, 4)
+    S[#S + 1] = "ep = " .. fmt(e.ep) .. ",  ev = " .. fmt(e.ev)
+    if st and m.yss then S[#S + 1] = "Simulacion: " .. metricstext(m) end
+    S[#S + 1] = "tab: plano s y respuesta y(t)"
+    L.res = {phi = phi, a = zc or 0, Kc = Kc}
+    local gtxt = rexact(Gc)
+    chain(L, "3", 3, {Gc = gtxt, Gp = v.Gp, lazo = "1", A = "1", k = ""}, "polos y respuesta LC con este Gc")
+    chain(L, "6", 6, {Gc = gtxt, Gp = v.Gp, L = "0", k = ""}, "margenes / Bode con este Gc")
+    summary(L, S)
+  end
   return L
 end
 
 --------------------------------------------------------------------------
 -- 7) Sintonia empirica (ZN, rele, Ho-Hang-Cao)
 --------------------------------------------------------------------------
+-- PID con derivada filtrada (Td/10) para poder simular
+local function pidtf_sim(Kp, Ti, Td)
+  if not Td or Td == 0 then
+    if not Ti then return rconst(Kp) end
+    return rat({Kp, Kp * Ti}, {0, Ti})
+  end
+  local a = Td / 10
+  -- Kp(1 + 1/(Ti s) + Td s/(a s + 1))
+  local base = rat({Kp, Kp * Ti}, {0, Ti})
+  return radd(base, rat({0, Kp * Td}, {1, a}))
+end
+
 local function pidtf(Kp, Ti, Td)
   -- Kp(1 + 1/(Ti s) + Td s)
   if not Ti then
@@ -1074,6 +1382,290 @@ local function m_empir(v)
     end
   end
   if #L == 0 then error("Ingrese K, " .. TAU .. ", L (modelo) y/o Ku, Pu, d, a") end
+  if haveModel and #verify > 0 then
+    sep(L, "Simulacion LC (escalon unitario, retardo exacto)")
+    add(L, "(PID con derivada filtrada Td/10 para simular)")
+    local curves, S = {}, {}
+    local wc = 1
+    do
+      local G0 = rmul(pidtf(verify[1][2], verify[1][3], verify[1][4]), Gp)
+      local mm = margins(freqobj(G0, Ld))
+      if mm.gc[1] then wc = mm.gc[1].w end
+    end
+    local tmax = math.max(25 / wc, 6 * Ld)
+    local function simc(name, Kp, Ti, Td)
+      local okc, ts, ys = pcall(simloop, pidtf_sim(Kp, Ti, Td), Gp, Ld, 1, tmax, 1500)
+      if not okc then return end
+      local mt = stepmetrics(ts, ys, 1)
+      local t2, y2 = decimate(ts, ys, 250)
+      local div = abs(ys[#ys] - 1) > 0.5
+      add(L, name .. ": " .. (div and "no converge (inestable)" or metricstext(mt)))
+      if #curves < 3 then curves[#curves + 1] = {t = t2, y = y2, name = name .. (div and " (inestable)" or (", Mp=" .. fmt(mt.Mp or 0, 3) .. "%"))} end
+      return mt, ys
+    end
+    local first
+    for i, c in ipairs(verify) do
+      local mt = simc(c[1], c[2], c[3], c[4])
+      if i == 1 then first = mt end
+    end
+    if fK and hhc then simc("HHC Kp x " .. fmt(fK), fK * hhc[2], hhc[3], hhc[4]) end
+    if #curves > 0 then
+      local ymax = -INF
+      for _, yv in ipairs(curves[1].y) do if yv > ymax then ymax = yv end end
+      view(L, {kind = "time", title = "Lazo cerrado con retardo", ref = 1, band = true, curves = curves,
+        marks = first and {Mp = first.Mp, tp = first.tp, ymax = ymax, ts = first.ts2} or nil})
+    end
+  end
+  do
+    local S = {}
+    if haveModel then S[#S + 1] = "ZN-LA PI: Kp = " .. fmt(0.9 * tau / (K * Ld)) .. ", Ti = " .. fmt(3.33 * Ld) .. " s" end
+    if Ku and Pu then S[#S + 1] = "ZN-LC PI: Kp = " .. fmt(0.45 * Ku) .. ", Ti = " .. fmt(Pu / 1.2) .. " s  (Ku=" .. fmt(Ku, 4) .. ", Pu=" .. fmt(Pu, 4) .. ")" end
+    if hhc then
+      S[#S + 1] = "HHC: Kp = " .. fmt(hhc[2]) .. ", Ti = " .. fmt(hhc[3]) .. " s" .. (hhc[4] and (", Td = " .. fmt(hhc[4])) or "")
+      local G0 = rmul(pidtf(hhc[2], hhc[3], hhc[4]), Gp)
+      local mm = margins(freqobj(G0, Ld))
+      if mm.gc[1] then S[#S + 1] = "HHC verif.: " .. W .. "cg = " .. fmt(mm.gc[1].w, 4) .. ", MF = " .. fmt(mm.gc[1].MF, 4) .. DEG end
+      if mm.pc[1] then S[#S + 1] = "            " .. W .. "cf = " .. fmt(mm.pc[1].w, 4) .. ", MG = " .. fmt(mm.pc[1].MG, 4) end
+      local gtxt = string.format("%.7g*(1+1/(%.7g*s))", hhc[2], hhc[3])
+      if hhc[4] then gtxt = string.format("%.7g*(1+1/(%.7g*s)+%.7g*s)", hhc[2], hhc[3], hhc[4]) end
+      local gp = string.format("%.7g/(%.7g*s+1)", K, tau)
+      if tau2 then gp = string.format("%.7g/((%.7g*s+1)*(%.7g*s+1))", K, tau, tau2) end
+      chain(L, "6", 6, {Gc = gtxt, Gp = gp, L = string.format("%.7g", Ld), k = ""}, "Bode / margenes del lazo HHC")
+    end
+    if #S > 0 then
+      if L.views then S[#S + 1] = "tab: respuesta simulada" end
+      summary(L, S)
+    end
+  end
+  return L
+end
+
+
+--------------------------------------------------------------------------
+-- 9) Identificacion de un modelo FOPDT desde la curva de reaccion
+--------------------------------------------------------------------------
+local function m_ident(v)
+  local L = {}
+  local du = num(v, "du") or 1
+  local y0 = num(v, "y0") or 0
+  local yf = req(num(v, "yf"), "y final")
+  local t28, t63 = num(v, "t28"), num(v, "t63")
+  local Lt, taut = num(v, "Lt"), num(v, "taut")
+  local dy = yf - y0
+  if du == 0 then error("du no puede ser 0") end
+  sep(L, "Paso 1: Ganancia")
+  local K = dy / du
+  add(L, "K = (y final - y inicial)/" .. "\206\148" .. "u = (" .. fmt(yf) .. " - " .. fmt(y0) .. ")/" .. fmt(du) .. " = " .. fmt(K))
+  local tau, Ld
+  if Lt and taut then
+    sep(L, "Paso 2: Metodo de la tangente (datos leidos)")
+    tau, Ld = taut, Lt
+    add(L, "L = " .. fmt(Ld) .. " s (corte de la tangente con y inicial)")
+    add(L, TAU .. " = " .. fmt(tau) .. " s (desde L hasta el corte con y final)")
+  else
+    req(t28, "t28"); req(t63, "t63")
+    sep(L, "Paso 2: Metodo de dos puntos (Smith)")
+    add(L, "y(t28) = y0 + 0.283" .. "\206\148" .. "y = " .. fmt(y0 + 0.283 * dy) .. ",  y(t63) = y0 + 0.632" .. "\206\148" .. "y = " .. fmt(y0 + 0.632 * dy))
+    tau = 1.5 * (t63 - t28)
+    Ld = t63 - tau
+    add(L, TAU .. " = 1.5(t63 - t28) = 1.5(" .. fmt(t63) .. " - " .. fmt(t28) .. ") = " .. fmt(tau) .. " s")
+    add(L, "L = t63 - " .. TAU .. " = " .. fmt(t63) .. " - " .. fmt(tau) .. " = " .. fmt(Ld) .. " s")
+    if Ld < 0 then add(L, "OJO: L < 0 (revise los tiempos leidos)") end
+  end
+  sep(L, "Modelo")
+  add(L, "Gp(s) = " .. fmt(K) .. "e^(-" .. fmt(Ld) .. "s)/(" .. fmt(tau) .. "s + 1)")
+  add(L, "Retardo normalizado L/" .. TAU .. " = " .. fmt(Ld / tau, 4))
+  sep(L, "Sintonia ZN (curva de reaccion)")
+  if Ld > 0 then
+    local P = tau / (K * Ld)
+    add(L, "PI : Kp = 0.9" .. TAU .. "/(KL) = " .. fmt(0.9 * P) .. "   Ti = 3.33L = " .. fmt(3.33 * Ld))
+    add(L, "PID: Kp = 1.2" .. TAU .. "/(KL) = " .. fmt(1.2 * P) .. "  Ti = 2L = " .. fmt(2 * Ld) .. "  Td = 0.5L = " .. fmt(0.5 * Ld))
+  end
+  -- curva del modelo
+  local ts, ys = {}, {}
+  local tmax = Ld + 5 * tau
+  for i = 0, 200 do
+    local t = tmax * i / 200
+    ts[#ts + 1] = t
+    ys[#ys + 1] = y0 + ((t > Ld) and dy * (1 - exp(-(t - Ld) / tau)) or 0)
+  end
+  view(L, {kind = "time", title = "Modelo identificado", ref = yf, band = false,
+    curves = {{t = ts, y = ys, name = "modelo FOPDT"}},
+    legend = {"K = " .. fmt(K, 4) .. ",  " .. TAU .. " = " .. fmt(tau, 4) .. " s,  L = " .. fmt(Ld, 4) .. " s"}})
+  chain(L, "8", 8, {K = string.format("%.7g", K), tau = string.format("%.7g", tau), L = string.format("%.7g", Ld), tau2 = ""}, "llevar el modelo a Sintonia (ZN / HHC)")
+  summary(L, {"K = " .. fmt(K) .. ",  " .. TAU .. " = " .. fmt(tau) .. " s,  L = " .. fmt(Ld) .. " s",
+    "Gp = " .. fmt(K) .. "e^(-" .. fmt(Ld) .. "s)/(" .. fmt(tau) .. "s+1)"})
+  return L
+end
+
+--------------------------------------------------------------------------
+-- 10) Entrenamiento: ejercicios aleatorios con correccion
+--------------------------------------------------------------------------
+local function rng(seed)
+  local x = (seed * 7919 + 104729) % 2147483647
+  return function(t)
+    x = (x * 48271) % 2147483647
+    return t[(x % #t) + 1]
+  end
+end
+
+local TRAIN = {}
+
+TRAIN[1] = function(R)
+  local Mp, ts = R({5, 9, 10, 15, 16.3, 20, 25, 30}), R({1, 2, 3, 4, 5, 8})
+  local z = zeta_from_Mp(Mp)
+  local sg = 4 / ts
+  local wn = sg / z
+  return {txt = {"Un sistema de 2o orden debe tener Mp = " .. fmt(Mp) .. " % y ts(2%) = " .. fmt(ts) .. " s.",
+    "Determine " .. U.zeta .. ", " .. U.wn .. " y " .. U.w .. "d de los polos deseados."},
+    ask = {U.zeta, U.wn .. " [rad/s]", U.w .. "d [rad/s]"}, ans = {z, wn, wn * sqrt(1 - z * z)},
+    mod = 1, v = {Mp = tostring(Mp), ts = tostring(ts), crit = "2"}}
+end
+
+local function placeprob(R, enulo)
+  for _ = 1, 30 do
+    local p1, p2, b = R({1, 2, 3}), R({4, 5, 6, 8, 10}), R({2, 3, 4, 5, 10})
+    local ts, Mp = R({1, 1.5, 2, 3, 4, 5}), R({8, 10, 15, 16.3, 20})
+    local gp = string.format("%g/((s+%g)(s+%g))", b, p1, p2)
+    local ok, L = pcall(MODULES[7].run, {Gp = gp, ts = tostring(ts), Mp = tostring(Mp), crit = "2", enulo = tostring(enulo), estr = "0"})
+    if ok and L.res and L.res.phi > 2 and L.res.phi < 170 then
+      return {txt = {"Gp(s) = " .. gp .. ", retroalimentacion unitaria.",
+        "Se pide ts(2%) = " .. fmt(ts) .. " s y Mp = " .. fmt(Mp) .. " %" .. (enulo == 1 and ", con error nulo ante escalon." or ", sin exigir error nulo."),
+        "Disene el controlador de estructura minima por localizacion de polos.",
+        "r1 = deficiencia " .. U.phi .. "d [" .. U.deg .. "],  r2 = cero a (s = -a; 0 si no hay),  r3 = Kc"},
+        ask = {U.phi .. "d [" .. U.deg .. "]", "cero a", "Kc"}, ans = {L.res.phi, L.res.a, L.res.Kc},
+        mod = 7, v = {Gp = gp, ts = tostring(ts), Mp = tostring(Mp), crit = "2", enulo = tostring(enulo), estr = "0"}}
+    end
+  end
+  error("no se pudo generar el ejercicio, cambie el numero")
+end
+TRAIN[2] = function(R) return placeprob(R, 0) end
+TRAIN[3] = function(R) return placeprob(R, 1) end
+
+TRAIN[4] = function(R)
+  local a, b, c = R({1, 2, 3}), R({4, 5, 6, 8, 10}), R({1, 2, 5, 10})
+  local gp = string.format("%g/(s(s+%g)(s+%g))", c, a, b)
+  local km = (a + b) * a * b / c
+  return {txt = {"Con Gc(s) = K y Gp(s) = " .. gp .. " (retro unitaria):",
+    "Determine el rango de K > 0 estable (Routh) y la frecuencia de oscilacion en el limite."},
+    ask = {"K maximo", U.w .. " cruce [rad/s]", "(vacio)"}, ans = {km, sqrt(a * b)},
+    mod = 5, v = {P = "", Gc = "k", Gp = gp, k = ""}}
+end
+
+TRAIN[5] = function(R)
+  local kind = R({0, 1})
+  local a, b, K = R({1, 2, 4, 5}), R({3, 6, 10}), R({2, 5, 8, 10, 20})
+  if kind == 1 then
+    local gp = string.format("%g/(s(s+%g))", K, a)
+    return {txt = {"G0(s) = " .. gp .. " (retro unitaria).", "Determine el tipo, Kv y el error ante rampa unitaria."},
+      ask = {"tipo N", "Kv", "ev"}, ans = {1, K / a, a / K}, mod = 4, v = {Gc = "1", Gp = gp, A = "1", k = ""}}
+  end
+  local gp = string.format("%g/((s+%g)(s+%g))", K, a, b)
+  local kp = K / (a * b)
+  return {txt = {"G0(s) = " .. gp .. " (retro unitaria).", "Determine el tipo, Kp y el error ante escalon unitario."},
+    ask = {"tipo N", "Kp", "ep"}, ans = {0, kp, 1 / (1 + kp)}, mod = 4, v = {Gc = "1", Gp = gp, A = "1", k = ""}}
+end
+
+TRAIN[6] = function(R)
+  for _ = 1, 30 do
+    local a, b, c, K = R({1, 2}), R({3, 4, 5}), R({6, 8, 10}), R({20, 40, 60, 100, 150})
+    local gp = string.format("%g/((s+%g)(s+%g)(s+%g))", K, a, b, c)
+    local G = parse(gp)
+    local m = margins(freqobj(G, 0))
+    if m.gc[1] and m.pc[1] and m.gc[1].MF > 5 then
+      return {txt = {"G0(s) = " .. gp .. ".", "Determine " .. U.w .. "cg, el margen de fase y el margen de ganancia (lineal)."},
+        ask = {U.w .. "cg [rad/s]", "MF [" .. U.deg .. "]", "MG"}, ans = {m.gc[1].w, m.gc[1].MF, m.pc[1].MG},
+        mod = 6, v = {Gc = "1", Gp = gp, L = "0", w = "", A = "", k = ""}}
+    end
+  end
+  error("no se pudo generar el ejercicio, cambie el numero")
+end
+
+TRAIN[7] = function(R)
+  local K, tau, Ld = R({1, 1.5, 2, 3}), R({5, 8, 10, 12, 20}), R({0.5, 1, 1.5, 2})
+  local MG, MF = R({2, 3, 4}), R({45, 50, 60})
+  local mf = MF * D2R
+  local wp = (MG * (mf - pi / 2) + (pi / 2) * MG * MG) / ((MG * MG - 1) * Ld)
+  local Kp = wp * tau / (MG * K)
+  local Ti = 1 / (2 * wp - 4 * wp * wp * Ld / pi + 1 / tau)
+  return {txt = {"Gp(s) = " .. fmt(K) .. "e^(-" .. fmt(Ld) .. "s)/(" .. fmt(tau) .. "s+1).",
+    "Disene un PI por Ho-Hang-Cao con MG = " .. MG .. " y MF = " .. MF .. DEG .. "."},
+    ask = {U.w .. "p [rad/s]", "Kp", "Ti [s]"}, ans = {wp, Kp, Ti},
+    mod = 8, v = {K = tostring(K), tau = tostring(tau), L = tostring(Ld), MG = tostring(MG), MF = tostring(MF)}}
+end
+
+TRAIN[8] = function(R)
+  local K, tau, Ld = R({1, 1.5, 2, 3}), R({10, 20, 50, 100, 200}), R({2, 5, 10, 15})
+  local Kp, Ti = 0.9 * tau / (K * Ld), 3.33 * Ld
+  local G0 = rmul(rat({Kp, Kp * Ti}, {0, Ti}), rat({K}, {1, tau}))
+  local m = margins(freqobj(G0, Ld))
+  return {txt = {"Gp(s) = " .. fmt(K) .. "e^(-" .. fmt(Ld) .. "s)/(" .. fmt(tau) .. "s+1).",
+    "a) Estime un PI por Ziegler-Nichols (lazo abierto).  b) Margen de fase del sistema controlado."},
+    ask = {"Kp", "Ti [s]", "MF [" .. U.deg .. "]"}, ans = {Kp, Ti, m.gc[1] and m.gc[1].MF or INF},
+    mod = 8, v = {K = tostring(K), tau = tostring(tau), L = tostring(Ld)}}
+end
+
+local TRAIN_NAMES = {"Especificaciones (" .. U.zeta .. ", " .. U.wn .. ", " .. U.w .. "d)", "Diseno P/PD por polos", "Diseno PI/PID por polos",
+  "Routh: K maximo", "Error estacionario", "Margenes MF/MG", "PI Ho-Hang-Cao", "PI Ziegler-Nichols + MF"}
+
+local function m_train(v)
+  local L = {}
+  local tipo = num(v, "tipo") or 1
+  tipo = math.floor(tipo)
+  if not TRAIN[tipo] then error("tipo debe ser 1 a " .. #TRAIN) end
+  local nro = math.floor(num(v, "nro") or 1)
+  local P = TRAIN[tipo](rng(nro * 31 + tipo))
+  sep(L, "Ejercicio " .. tipo .. "." .. nro .. ": " .. TRAIN_NAMES[tipo])
+  for _, t in ipairs(P.txt) do add(L, t) end
+  local given = {}
+  local anyg, wantsol = false, false
+  for i = 1, 3 do
+    local s_ = v["r" .. i]
+    if s_ and s_:match("%?") then wantsol = true
+    elseif not blank(s_) then
+      local ok, r = pcall(parse, s_, nil)
+      if ok and risconst(r) then given[i] = rval(r); anyg = true end
+    end
+  end
+  sep(L, "Se pide")
+  for i = 1, 3 do
+    if P.ans[i] then add(L, "r" .. i .. " = " .. P.ask[i]) end
+  end
+  if not anyg and not wantsol then
+    add(L, "Resuelva a mano, escriba r1..r3 y presione enter.")
+    add(L, "(escriba ? en r1 para ver la solucion; cambie 'nro' para otro ejercicio)")
+    summary(L, {"Ejercicio " .. tipo .. "." .. nro .. " listo: lea el enunciado abajo"})
+    return L
+  end
+  local S = {}
+  local okc = 0
+  local tot = 0
+  for i = 1, 3 do
+    local a = P.ans[i]
+    if a then
+      tot = tot + 1
+      local g = given[i]
+      local line
+      if g == nil then line = "r" .. i .. " (" .. P.ask[i] .. "): sin respuesta; correcto = " .. fmt(a, 4)
+      else
+        local tol = math.max(0.02 * abs(a), 0.01)
+        if P.ask[i]:find(U.deg) then tol = math.max(tol, 0.5) end
+        if abs(g - a) <= tol then line = "r" .. i .. " (" .. P.ask[i] .. "): " .. fmt(g, 4) .. "  CORRECTO"; okc = okc + 1
+        else line = "r" .. i .. " (" .. P.ask[i] .. "): " .. fmt(g, 4) .. "  INCORRECTO, correcto = " .. fmt(a, 4) end
+      end
+      S[#S + 1] = line
+    end
+  end
+  table.insert(S, 1, "Puntaje: " .. okc .. "/" .. tot)
+  sep(L, "Solucion paso a paso (modulo " .. P.mod .. ")")
+  local ok, sol = pcall(MODULES[P.mod].run, P.v)
+  if ok then
+    for i = 1, #sol do add(L, sol[i]) end
+    if sol.views then for _, vw in ipairs(sol.views) do view(L, vw) end end
+  else
+    add(L, "(no se pudo generar la solucion: " .. tostring(sol) .. ")")
+  end
+  summary(L, S)
   return L
 end
 
@@ -1091,6 +1683,12 @@ local HELP = {
   "'MF, MG, frecuencias de cruce, |G(j" .. U.w .. ")|' " .. U.arrow .. " 6",
   "'Disene P/PD/PI/PID para ts y Mp' " .. U.arrow .. " 7 (error nulo=1 si pide respuesta exacta)",
   "'Ziegler-Nichols / rele / Ho-Hang-Cao' " .. U.arrow .. " 8 (K, " .. U.tau .. ", L del modelo)",
+  "'Curva de reaccion / identificar K, tau, L' " .. U.arrow .. " 9",
+  "Practicar con ejercicios al azar " .. U.arrow .. " 10 (tecla 0 en el menu)",
+  "== En los resultados ==",
+  "Arriba: RESPUESTAS (lo que se escribe en la hoja). Abajo: desarrollo.",
+  "tab: graficos (plano s, y(t), Bode, lugar de raices).",
+  "Teclas 3/4/6/8: enviar el resultado a otro modulo (se indica en RESPUESTAS).",
   "== Glosario ==",
   U.w .. "cg: cruce de GANANCIA (|G|=1, 0 dB). 'Frecuencia de corte'. Ahi se mide MF.",
   "MF = 180" .. U.deg .. " + " .. U.ang .. "G(j" .. U.w .. "cg). Estable si MF > 0.",
@@ -1202,6 +1800,22 @@ MODULES = {
     {"d", "rele d", "Amplitud del rele " .. U.pm .. "d"},
     {"a", "rele a", "Amplitud de oscilacion de la salida"},
     {"fKp", "factor Kp", "Ej 2 = duplicar Kp (Ti fijo) y comparar"},
+  }},
+  {title = "Identificacion (curva)", short = "K, " .. U.tau .. ", L desde la curva de reaccion", run = m_ident, fields = {
+    {"du", U.arrow .. "u escalon", "Tamano del escalon aplicado a la entrada", "1"},
+    {"y0", "y inicial", "Valor de la salida antes del escalon", "0"},
+    {"yf", "y final", "Valor final de la salida (estado estable)"},
+    {"t28", "t 28.3%", "Tiempo en que y llega al 28.3% del cambio"},
+    {"t63", "t 63.2%", "Tiempo en que y llega al 63.2% del cambio"},
+    {"Lt", "L tangente", "(opcional) L leido con la tangente"},
+    {"taut", U.tau .. " tangente", "(opcional) " .. U.tau .. " leido con la tangente"},
+  }},
+  {title = "Entrenamiento", short = "ejercicios al azar con correccion", run = m_train, fields = {
+    {"tipo", "tipo", "1 espec. 2 PD 3 PI/PID 4 Routh 5 error 6 MF/MG 7 HHC 8 ZN", "1"},
+    {"nro", "n" .. "\194\186" .. " ejercicio", "Cambie el numero para otro ejercicio", "1"},
+    {"r1", "r1", "Su respuesta 1 (? = ver solucion)"},
+    {"r2", "r2", "Su respuesta 2"},
+    {"r3", "r3", "Su respuesta 3"},
   }},
   {title = "Ayuda", short = "teclas y sintaxis", help = HELP, fields = {}},
 }

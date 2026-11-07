@@ -176,7 +176,7 @@ local function polish(p, dp, zr, zi)
 end
 
 -- devuelve lista de {re, im}
-function proots(pin)
+function proots(pin, init)
   local p = ptrim(pcopy(pin))
   local roots = {}
   local nz = pzeroroots(p)
@@ -214,10 +214,17 @@ function proots(pin)
     end
     R = math.max(R, 1e-3)
     local zr, zi = {}, {}
+    local useinit = init and #init == n and nz == 0
     for k = 1, n do
-      local ang = 2 * pi * (k - 1) / n + 0.4
-      zr[k] = R * math.cos(ang)
-      zi[k] = R * math.sin(ang)
+      if useinit then
+        -- continuacion: partir de las raices anteriores (perturbadas)
+        zr[k] = init[k][1] + 1e-7 * k
+        zi[k] = init[k][2] + 1.3e-7 * k
+      else
+        local ang = 2 * pi * (k - 1) / n + 0.4
+        zr[k] = R * math.cos(ang)
+        zi[k] = R * math.sin(ang)
+      end
     end
     for it = 1, 800 do
       local maxstep = 0
@@ -240,7 +247,7 @@ function proots(pin)
         local sc = math.max(1, abs(zr[k]) + abs(zi[k]))
         if st / sc > maxstep then maxstep = st / sc end
       end
-      if maxstep < 1e-15 then break end
+      if maxstep < 1e-13 then break end
     end
     local dp = pderiv(a)
     for k = 1, n do zr[k], zi[k] = polish(a, dp, zr[k], zi[k]) end
@@ -998,4 +1005,179 @@ function partialfractions(N, D)
     end
   end
   return groups
+end
+
+
+--------------------------------------------------------------------------
+-- respuesta temporal exacta a partir de fracciones parciales
+--------------------------------------------------------------------------
+-- y(t) = sum Re( c_j t^(j-1)/(j-1)! e^(p t) )  (todos los polos, incl. conjugados)
+function evalpf(groups, t)
+  local y = 0
+  for _, g in ipairs(groups) do
+    local er = exp(g.p[1] * t)
+    local cr, ci = math.cos(g.p[2] * t), math.sin(g.p[2] * t)
+    local tp, f = 1, 1
+    for j = 1, g.m do
+      if j > 1 then tp = tp * t; f = f * (j - 1) end
+      local c = g.c[j]
+      -- Re((cr_ + j ci_) * (cos + j sin)) * e^(sigma t)
+      y = y + er * (c[1] * cr - c[2] * ci) * tp / f
+    end
+  end
+  return y
+end
+
+-- respuesta al escalon de amplitud A de T (racional propia)
+function stepresp(T, A, tmax, N)
+  local groups = partialfractions(pscale(T.n, A), pmul(T.d, {0, 1}))
+  local ts, ys = {}, {}
+  for i = 0, N do
+    local t = tmax * i / N
+    ts[#ts + 1] = t
+    ys[#ys + 1] = evalpf(groups, t)
+  end
+  return ts, ys
+end
+
+-- horizonte de simulacion razonable segun los polos
+function horizon(poles)
+  local dom = nil
+  local fastest = 0
+  for _, r in ipairs(poles) do
+    if r[1] < -1e-9 then
+      if not dom or -r[1] < dom then dom = -r[1] end
+    end
+    if abs(r[1]) > fastest then fastest = abs(r[1]) end
+    if r[2] ~= 0 and abs(r[2]) > fastest then fastest = abs(r[2]) end
+  end
+  local unst = 0
+  for _, r in ipairs(poles) do if r[1] > unst then unst = r[1] end end
+  if unst > 1e-9 then return 4 / unst end
+  if not dom then return 20 end
+  return 1.6 * 4 / dom
+end
+
+--------------------------------------------------------------------------
+-- simulacion en el tiempo con retardo (RK4, retenedor en cada paso)
+--------------------------------------------------------------------------
+-- realizacion canonica controlable de una racional propia
+function ssreal(R)
+  local d = R.d
+  local m = #d - 1
+  local l = d[#d]
+  local a = {}
+  for i = 1, m + 1 do a[i] = d[i] / l end
+  local n = {}
+  for i = 1, #R.n do n[i] = R.n[i] / l end
+  if #n > m + 1 then error("Gc impropio: no se puede simular") end
+  local D = n[m + 1] or 0
+  local c = {}
+  for i = 1, m do c[i] = (n[i] or 0) - D * a[i] end
+  return {m = m, a = a, c = c, D = D}
+end
+
+local function ssderiv(S, x, u, dx)
+  local m = S.m
+  for i = 1, m - 1 do dx[i] = x[i + 1] end
+  if m > 0 then
+    local s_ = u
+    for i = 1, m do s_ = s_ - S.a[i] * x[i] end
+    dx[m] = s_
+  end
+end
+
+local function ssout(S, x, u)
+  local y = S.D * u
+  for i = 1, S.m do y = y + S.c[i] * x[i] end
+  return y
+end
+
+local function rk4(S, x, u, h)
+  local m = S.m
+  if m == 0 then return end
+  if not S.k1 then S.k1, S.k2, S.k3, S.k4, S.xt = {}, {}, {}, {}, {} end
+  local k1, k2, k3, k4, xt = S.k1, S.k2, S.k3, S.k4, S.xt
+  ssderiv(S, x, u, k1)
+  for i = 1, m do xt[i] = x[i] + 0.5 * h * k1[i] end
+  ssderiv(S, xt, u, k2)
+  for i = 1, m do xt[i] = x[i] + 0.5 * h * k2[i] end
+  ssderiv(S, xt, u, k3)
+  for i = 1, m do xt[i] = x[i] + h * k3[i] end
+  ssderiv(S, xt, u, k4)
+  for i = 1, m do x[i] = x[i] + h / 6 * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]) end
+end
+
+-- lazo cerrado unitario: e = A - y ; u = Gc(e) ; y = Gp(u(t - L))
+function simloop(Gc, Gp, L, A, tmax, nsteps)
+  local Sc, Sp = ssreal(Gc), ssreal(Gp)
+  local h = tmax / nsteps
+  local nd = math.floor((L or 0) / h + 0.5)
+  local xc, xp = {}, {}
+  for i = 1, Sc.m do xc[i] = 0 end
+  for i = 1, Sp.m do xp[i] = 0 end
+  local buf = {}
+  for i = 1, nd do buf[i] = 0 end
+  local head = 1
+  local ts, ys, us = {0}, {0}, {}
+  local y = ssout(Sp, xp, 0)
+  ys[1] = y
+  for k = 1, nsteps do
+    local e = A - y
+    local u = ssout(Sc, xc, e)
+    us[#us + 1] = u
+    local ud = u
+    if nd > 0 then ud = buf[head]; buf[head] = u; head = head % nd + 1 end
+    rk4(Sc, xc, e, h)
+    rk4(Sp, xp, ud, h)
+    y = ssout(Sp, xp, ud)
+    if y ~= y or abs(y) > 1e12 then break end
+    ts[#ts + 1] = k * h
+    ys[#ys + 1] = y
+  end
+  return ts, ys, us
+end
+
+-- metricas de una respuesta al escalon
+function stepmetrics(ts, ys, yss)
+  local n = #ys
+  local res = {yss = yss}
+  if not yss or yss ~= yss or abs(yss) < 1e-12 then return res end
+  local ymax, imax = -INF, 1
+  for i = 1, n do if ys[i] > ymax then ymax, imax = ys[i], i end end
+  if yss > 0 then
+    res.Mp = math.max(0, (ymax - yss) / abs(yss) * 100)
+  else
+    local ymin, imin = INF, 1
+    for i = 1, n do if ys[i] < ymin then ymin, imin = ys[i], i end end
+    res.Mp = math.max(0, (yss - ymin) / abs(yss) * 100)
+    imax = imin
+  end
+  res.tp = (res.Mp > 0.05) and ts[imax] or nil
+  for i = 2, n do
+    if (ys[i] - yss) * (ys[1] - yss) <= 0 then res.tr = ts[i]; break end
+  end
+  for _, tol in ipairs({2, 5}) do
+    local band = tol / 100 * abs(yss)
+    local last = nil
+    for i = n, 1, -1 do
+      if abs(ys[i] - yss) > band then last = i; break end
+    end
+    if last == nil then res["ts" .. tol] = 0
+    elseif last < n then res["ts" .. tol] = ts[last + 1]
+    else res["ts" .. tol] = nil end
+  end
+  return res
+end
+
+-- submuestreo para graficar
+function decimate(ts, ys, maxn)
+  local n = #ts
+  if n <= maxn then return ts, ys end
+  local t2, y2 = {}, {}
+  for i = 1, maxn do
+    local k = math.floor((i - 1) * (n - 1) / (maxn - 1)) + 1
+    t2[i] = ts[k]; y2[i] = ys[k]
+  end
+  return t2, y2
 end

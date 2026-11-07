@@ -11,7 +11,9 @@ local rlines = {}          -- lineas de resultado (sin ajustar)
 local rwrap, rwrapW = nil, -1
 local rscroll = 0
 local rerror = false
-local rplot = nil          -- datos del grafico (modulo de localizacion)
+local rviews = nil         -- graficos del resultado (tab los recorre)
+local vidx = 1
+local rchain = nil         -- envio de datos a otros modulos (teclas)
 local lscroll = 0          -- desplazamiento de la leyenda del grafico
 local VALS = {}            -- VALS[i][key] = texto
 
@@ -83,11 +85,12 @@ local function compute()
   local m = MODULES[cur]
   local ok, res = pcall(m.run, VALS[cur])
   if ok then
-    rlines = res; rerror = false; rplot = res.plot; lscroll = 0
+    rlines = res; rerror = false; rviews = res.views; rchain = res.chain; vidx = 1; lscroll = 0
+    if rviews and #rviews == 0 then rviews = nil end
   else
     local msg = tostring(res):gsub("^.-:%d+: ", "")
     rlines = {"ERROR", msg, "", "Revise los datos (esc para volver)."}
-    rplot = nil
+    rviews = nil; rchain = nil
     rerror = true
   end
   rwrap = nil; rscroll = 0
@@ -137,7 +140,7 @@ end
 local HOME = {y0 = 19, rh = 18, vis = 9, scroll = 0}
 
 local function paint_home(gc)
-  titlebar(gc, "Control Automatico", "v5 - APN")
+  titlebar(gc, "Control Automatico", "v6 - APN")
   -- alturas reales de las fuentes (evita superposiciones)
   gc:setFont("sansserif", "b", 10)
   local th = gc:getStringHeight("Ay")
@@ -249,7 +252,7 @@ end
 
 local function paint_result(gc)
   local m = MODULES[cur]
-  titlebar(gc, cur .. ". " .. m.title, rplot and "tab: grafico" or "esc: volver")
+  titlebar(gc, cur .. ". " .. m.title, rviews and ("tab: grafico (" .. #rviews .. ")") or "esc: volver")
   gc:setFont("sansserif", "r", 9)
   local lh = gc:getStringHeight("Ay")
   if lh < 11 then lh = 11 end
@@ -315,9 +318,12 @@ local function marker(gc, kind, x, y)
   end
 end
 
-local function paint_graph(gc)
-  titlebar(gc, "Plano s: angulos hacia pd", "tab: volver")
-  local P = rplot
+local function vtitle(gc, t)
+  titlebar(gc, t, "tab " .. vidx .. "/" .. #rviews)
+end
+
+local function paint_splane(gc, P)
+  vtitle(gc, "Plano s: angulos hacia pd")
   gc:setFont("sansserif", "r", 7)
   local lh = gc:getStringHeight("Ay")
   if lh < 9 then lh = 9 end
@@ -440,11 +446,234 @@ local function paint_graph(gc)
   end
 end
 
+-- utilidades de ejes ----------------------------------------------------
+local function nicestep(range, n)
+  local raw = range / n
+  if raw <= 0 then return 1 end
+  local e = 10 ^ math.floor(math.log10(raw))
+  local f = raw / e
+  local st = (f < 1.5) and 1 or ((f < 3.5) and 2 or ((f < 7.5) and 5 or 10))
+  return st * e
+end
+
+local function frame(gc, x0, y0, x1, y1, xmin, xmax, ymin, ymax, logx, nox)
+  local function X(x) return x0 + (x - xmin) / (xmax - xmin) * (x1 - x0) end
+  local function Y(y) return y1 - (y - ymin) / (ymax - ymin) * (y1 - y0) end
+  col(gc, C.box); gc:drawRect(x0, y0, x1 - x0, y1 - y0)
+  gc:setFont("sansserif", "r", 7)
+  -- marcas eje y
+  local sy = nicestep(ymax - ymin, 4)
+  local v = math.ceil(ymin / sy) * sy
+  while v <= ymax + 1e-9 do
+    local yy = Y(v)
+    col(gc, {0xE4, 0xE4, 0xE4}); gc:drawLine(x0 + 1, yy, x1 - 1, yy)
+    col(gc, C.grey); gc:drawString(fmt(v, 3), 1, yy - 6, "top")
+    v = v + sy
+  end
+  -- marcas eje x
+  if logx then
+    for d = math.ceil(xmin), math.floor(xmax) do
+      local xx = X(d)
+      col(gc, {0xE4, 0xE4, 0xE4}); gc:drawLine(xx, y0 + 1, xx, y1 - 1)
+      if not nox then col(gc, C.grey); gc:drawString("1e" .. d, xx - 8, y1 + 1, "top") end
+    end
+  else
+    local sx = nicestep(xmax - xmin, 5)
+    local u = math.ceil(xmin / sx) * sx
+    while u <= xmax + 1e-9 do
+      local xx = X(u)
+      col(gc, {0xE4, 0xE4, 0xE4}); gc:drawLine(xx, y0 + 1, xx, y1 - 1)
+      col(gc, C.grey); gc:drawString(fmt(u, 3), xx - 6, y1 + 1, "top")
+      u = u + sx
+    end
+  end
+  return X, Y
+end
+
+local function dashed(gc, on_)
+  if gc.setPen then pcall(function() gc:setPen("thin", on_ and "dashed" or "smooth") end) end
+end
+
+local function legendbox(gc, lines, nmax)
+  gc:setFont("sansserif", "r", 7)
+  local lh = math.max(9, gc:getStringHeight("Ay"))
+  local n = math.min(#lines, nmax or 4)
+  local hgt = n * lh + 3
+  local ly = H() - hgt
+  col(gc, C.hint); gc:fillRect(0, ly, W(), hgt)
+  col(gc, C.box); gc:drawLine(0, ly, W(), ly)
+  local sc = math.max(0, math.min(lscroll, #lines - n))
+  for i = 1, n do
+    local l = lines[sc + i]
+    if l then
+      col(gc, l[2] or C.black)
+      gc:drawString(l[1], 3, ly + 2 + (i - 1) * lh, "top")
+    end
+  end
+  return ly
+end
+
+local CURVE = {{0x10, 0x40, 0xE0}, {0xD0, 0x10, 0x10}, {0x00, 0x96, 0x20}, {0x90, 0x30, 0xB0}}
+
+-- respuesta temporal ----------------------------------------------------
+local function paint_time(gc, V)
+  vtitle(gc, V.title or "Respuesta y(t)")
+  local leg = {}
+  for i, c in ipairs(V.curves) do leg[#leg + 1] = {c.name, CURVE[i]} end
+  for _, l in ipairs(V.legend or {}) do leg[#leg + 1] = {l, C.black} end
+  local ly = legendbox(gc, leg, 4)
+  local tmax, ymin, ymax = 0, 0, 0
+  for _, c in ipairs(V.curves) do
+    for i = 1, #c.t do
+      if c.t[i] > tmax then tmax = c.t[i] end
+      if c.y[i] > ymax then ymax = c.y[i] end
+      if c.y[i] < ymin then ymin = c.y[i] end
+    end
+  end
+  if V.ref then ymax = math.max(ymax, V.ref) end
+  local pad = 0.08 * (ymax - ymin + 1e-9)
+  ymax, ymin = ymax + pad, ymin - pad
+  if tmax <= 0 then tmax = 1 end
+  local X, Y = frame(gc, 26, 20, W() - 4, ly - 11, 0, tmax, ymin, ymax, false)
+  -- referencia y banda de 2%
+  if V.ref then
+    col(gc, C.grey); dashed(gc, true)
+    gc:drawLine(X(0), Y(V.ref), X(tmax), Y(V.ref))
+    if V.band then
+      col(gc, {0xB0, 0xB0, 0xB0})
+      gc:drawLine(X(0), Y(V.ref * 1.02), X(tmax), Y(V.ref * 1.02))
+      gc:drawLine(X(0), Y(V.ref * 0.98), X(tmax), Y(V.ref * 0.98))
+    end
+    dashed(gc, false)
+  end
+  for i, c in ipairs(V.curves) do
+    col(gc, CURVE[i])
+    for k = 2, #c.t do gc:drawLine(X(c.t[k - 1]), Y(c.y[k - 1]), X(c.t[k]), Y(c.y[k])) end
+  end
+  -- marcas de la primera curva
+  local m = V.marks
+  if m then
+    gc:setFont("sansserif", "b", 7)
+    if m.tp and m.ymax then
+      col(gc, CURVE[1]); gc:fillArc(X(m.tp) - 3, Y(m.ymax) - 3, 6, 6, 0, 360)
+      gc:drawString("Mp=" .. fmt(m.Mp, 3) .. "%", math.min(X(m.tp) + 4, W() - 60), Y(m.ymax) - 2, "top")
+    end
+    if m.ts then
+      col(gc, CURVE[3]); dashed(gc, true)
+      gc:drawLine(X(m.ts), 21, X(m.ts), ly - 12)
+      dashed(gc, false)
+      gc:drawString("ts", X(m.ts) + 2, 22, "top")
+    end
+  end
+  col(gc, C.grey); gc:setFont("sansserif", "r", 7)
+  gc:drawString("t [s]", W() - 28, ly - 22, "top")
+end
+
+-- Bode --------------------------------------------------------------------
+local function paint_bode(gc, V)
+  vtitle(gc, "Bode de G0(j" .. U.w .. ")")
+  local leg = {}
+  for _, l in ipairs(V.legend or {}) do leg[#leg + 1] = {l[1], l[2] and GCOL[l[2]] or C.black} end
+  local ly = legendbox(gc, leg, 3)
+  local top, bot = 19, ly - 10
+  local mid = math.floor((top + bot) / 2)
+  local lw0, lw1 = V.lw[1], V.lw[#V.lw]
+  local mmin, mmax, pmin, pmax = 0, 0, -180, -90
+  for i = 1, #V.lw do
+    mmin = math.min(mmin, V.mag[i]); mmax = math.max(mmax, V.mag[i])
+    pmin = math.min(pmin, V.ph[i]); pmax = math.max(pmax, V.ph[i])
+  end
+  mmin, mmax = math.max(mmin, -80) - 3, math.min(mmax, 80) + 3
+  pmin, pmax = math.max(pmin, -540) - 10, math.min(pmax, 180) + 10
+  local X, Ym = frame(gc, 26, top, W() - 4, mid - 2, lw0, lw1, mmin, mmax, true, true)
+  local _, Yp = frame(gc, 26, mid + 2, W() - 4, bot, lw0, lw1, pmin, pmax, true)
+  gc:setFont("sansserif", "r", 7); col(gc, C.grey)
+  gc:drawString("dB", 28, top + 1, "top"); gc:drawString("fase " .. U.deg, 28, mid + 3, "top")
+  -- 0 dB y -180
+  col(gc, C.grey); dashed(gc, true)
+  gc:drawLine(X(lw0), Ym(0), X(lw1), Ym(0))
+  gc:drawLine(X(lw0), Yp(-180), X(lw1), Yp(-180))
+  dashed(gc, false)
+  col(gc, CURVE[1])
+  for i = 2, #V.lw do
+    local a, b = math.max(mmin, math.min(mmax, V.mag[i - 1])), math.max(mmin, math.min(mmax, V.mag[i]))
+    gc:drawLine(X(V.lw[i - 1]), Ym(a), X(V.lw[i]), Ym(b))
+    local c, d = math.max(pmin, math.min(pmax, V.ph[i - 1])), math.max(pmin, math.min(pmax, V.ph[i]))
+    gc:drawLine(X(V.lw[i - 1]), Yp(c), X(V.lw[i]), Yp(d))
+  end
+  gc:setFont("sansserif", "b", 7)
+  if V.wcg then
+    local x = X(math.log10(V.wcg))
+    col(gc, GCOL.cz); dashed(gc, true); gc:drawLine(x, top + 1, x, bot - 1); dashed(gc, false)
+    gc:drawLine(x, Yp(V.phcg), x, Yp(-180))
+    gc:fillArc(x - 2, Yp(V.phcg) - 2, 4, 4, 0, 360)
+    gc:drawString("MF=" .. fmt(V.MF, 3) .. U.deg, math.min(x + 3, W() - 50), (Yp(V.phcg) + Yp(-180)) / 2 - 5, "top")
+    gc:drawString(U.w .. "cg", math.min(x + 2, W() - 22), top + 1, "top")
+  end
+  if V.wcf then
+    local x = X(math.log10(V.wcf))
+    col(gc, GCOL.pp); dashed(gc, true); gc:drawLine(x, top + 1, x, bot - 1); dashed(gc, false)
+    gc:drawLine(x, Ym(V.magcf), x, Ym(0))
+    gc:fillArc(x - 2, Ym(V.magcf) - 2, 4, 4, 0, 360)
+    gc:drawString("MG=" .. fmt(-V.magcf, 3) .. "dB", math.min(x + 3, W() - 55), (Ym(V.magcf) + Ym(0)) / 2 - 5, "top")
+    gc:drawString(U.w .. "cf", math.min(x + 2, W() - 22), mid + 3, "top")
+  end
+end
+
+-- lugar geometrico de las raices ------------------------------------------
+local function paint_rlocus(gc, V)
+  vtitle(gc, "Lugar de raices (k > 0)")
+  local leg = {}
+  for _, l in ipairs(V.legend or {}) do leg[#leg + 1] = {l[1], l[2] and GCOL[l[2]] or C.black} end
+  local ly = legendbox(gc, leg, 3)
+  local top, bot, left, right = 19, ly - 2, 4, W() - 4
+  local R = V.R
+  local xmin, xmax, ymin, ymax = V.xmin, V.xmax, -V.ymax, V.ymax
+  local sc = math.min((right - left) / (xmax - xmin), (bot - top) / (ymax - ymin))
+  local cxw = (right - left) - sc * (xmax - xmin)
+  local cyh = (bot - top) - sc * (ymax - ymin)
+  local function X(x) return left + cxw / 2 + (x - xmin) * sc end
+  local function Y(y) return top + cyh / 2 + (ymax - y) * sc end
+  col(gc, C.box)
+  gc:drawLine(left, Y(0), right, Y(0))
+  if X(0) >= left and X(0) <= right then gc:drawLine(X(0), top, X(0), bot) end
+  col(gc, CURVE[1])
+  for _, p in ipairs(V.pts) do
+    local x, y = X(p[1]), Y(p[2])
+    if x >= left and x <= right and y >= top and y <= bot then gc:fillRect(x, y, 2, 2) end
+  end
+  for _, p in ipairs(V.poles) do marker(gc, "pp", X(p[1]), Y(p[2])) end
+  for _, z in ipairs(V.zeros) do marker(gc, "pz", X(z[1]), Y(z[2])) end
+  gc:setFont("sansserif", "b", 7)
+  for _, c in ipairs(V.cross) do
+    col(gc, GCOL.cz)
+    gc:fillArc(X(0) - 3, Y(c.w) - 3, 6, 6, 0, 360)
+    gc:fillArc(X(0) - 3, Y(-c.w) - 3, 6, 6, 0, 360)
+    gc:drawString("k=" .. fmt(c.k, 4), math.min(X(0) + 4, right - 50), Y(c.w) - 4, "top")
+  end
+  if V.kpoles then
+    for _, p in ipairs(V.kpoles) do
+      col(gc, GCOL.pd); gc:fillArc(X(p[1]) - 3, Y(p[2]) - 3, 6, 6, 0, 360)
+    end
+  end
+  col(gc, C.grey); gc:setFont("sansserif", "r", 7)
+  gc:drawString(U.sigma, right - 8, Y(0) - 11, "top")
+  gc:drawString("j" .. U.w, X(0) + 3, top, "top")
+end
+
+local function paint_graph(gc)
+  local V = rviews[vidx]
+  if V.kind == "splane" then paint_splane(gc, V)
+  elseif V.kind == "time" then paint_time(gc, V)
+  elseif V.kind == "bode" then paint_bode(gc, V)
+  elseif V.kind == "rlocus" then paint_rlocus(gc, V) end
+end
+
 function on.paint(gc)
   col(gc, C.white); gc:fillRect(0, 0, W(), H())
   if screen == "home" then paint_home(gc)
   elseif screen == "form" then paint_form(gc)
-  elseif screen == "graph" and rplot then paint_graph(gc)
+  elseif screen == "graph" and rviews then paint_graph(gc)
   else paint_result(gc) end
 end
 
@@ -491,8 +720,11 @@ end
 
 function on.tabKey()
   if screen == "form" then on.arrowDown()
-  elseif screen == "result" and rplot then screen = "graph"; inval()
-  elseif screen == "graph" then screen = "result"; inval() end
+  elseif screen == "result" and rviews then screen = "graph"; vidx = 1; lscroll = 0; inval()
+  elseif screen == "graph" then
+    if vidx < #rviews then vidx = vidx + 1; lscroll = 0 else screen = "result" end
+    inval()
+  end
 end
 function on.backtabKey() if screen == "form" then on.arrowUp() end end
 
@@ -518,7 +750,17 @@ end
 function on.charIn(ch)
   if screen == "home" then
     local d = tonumber(ch)
+    if d == 0 then d = 10 end
     if d and d >= 1 and d <= #MODULES then hsel = d; openmodule(d) end
+    return
+  end
+  -- en resultados: tecla numerica = enviar datos a otro modulo
+  if screen == "result" and rchain and rchain[ch] then
+    local c = rchain[ch]
+    local t = c.target
+    for k, val in pairs(c.vals) do VALS[t][k] = val end
+    cur = t; fsel = 1; hsel = t
+    compute()
     return
   end
   if screen ~= "form" then
