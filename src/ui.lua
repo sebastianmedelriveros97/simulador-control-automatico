@@ -134,7 +134,7 @@ end
 local HOME = {y0 = 19, rh = 18, vis = 9, scroll = 0}
 
 local function paint_home(gc)
-  titlebar(gc, "Control Automatico", "v3 - APN")
+  titlebar(gc, "Control Automatico", "v4 - APN")
   -- alturas reales de las fuentes (evita superposiciones)
   gc:setFont("sansserif", "b", 10)
   local th = gc:getStringHeight("Ay")
@@ -421,12 +421,14 @@ end
 --------------------------------------------------------------------------
 -- guardar / restaurar datos con el documento
 --------------------------------------------------------------------------
+local STATE_VER = 3
 function on.save()
-  return {vals = VALS, hsel = hsel}
+  return {vals = VALS, hsel = hsel, ver = STATE_VER}
 end
 
 function on.restore(st)
-  if type(st) == "table" and type(st.vals) == "table" then
+  -- datos de una version anterior (otro orden de modulos): se ignoran
+  if type(st) == "table" and st.ver == STATE_VER and type(st.vals) == "table" then
     for i, t in pairs(st.vals) do
       if type(t) == "table" and VALS[i] then
         for k, v in pairs(t) do if type(v) == "string" then VALS[i][k] = v end end

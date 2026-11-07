@@ -272,6 +272,7 @@ local function m_polos(v)
     add(L, "G tiene integrador: y(" .. U.inf .. ") no acotada ante escalon")
   end
   sep(L, "Respuesta temporal")
+  add(L, "Regla: si |Re| del siguiente polo " .. U.ge .. " 5" .. "\194\183" .. "|Re| del dominante, se desprecia (reduccion).")
   dyn_report(L, T, poles, zeros)
   return L
 end
@@ -298,7 +299,7 @@ local function m_resp(v)
   local R
   if ent == 0 then R = rconst(A) elseif ent == 2 then R = rat({A}, {0, 0, 1}) else R = rat({A}, {0, 1}) end
   local names = {[0] = "impulso R(s) = A", "escalon R(s) = A/s", "rampa R(s) = A/s" .. U.sq}
-  sep(L, "Y(s) = G(s)" .. "\194\183" .. "R(s)")
+  sep(L, "Paso 1: Y(s) = G(s)" .. "\194\183" .. "R(s)")
   add(L, (lazo == 1 and "GLC" or "G") .. "(s) = " .. rstr(G))
   add(L, "Entrada: " .. (names[ent] or names[1]) .. ",  A = " .. fmt(A))
   local Y = rat(pmul(G.n, R.n), pmul(G.d, R.d))
@@ -306,7 +307,8 @@ local function m_resp(v)
   local gp = proots(G.d)
   add(L, "Polos de G: " .. rootsstr(gp))
   local groups = partialfractions(Y.n, Y.d)
-  sep(L, "Fracciones parciales")
+  sep(L, "Paso 2: Fracciones parciales")
+  add(L, "Y(s) = " .. "\206\163" .. " Ai/(s - pi),  Ai = lim(s" .. U.arrow .. "pi) (s - pi)Y(s)")
   local terms = {}
   local function addterm(c, body)
     if abs(c) < 1e-11 then return end
@@ -344,7 +346,8 @@ local function m_resp(v)
       end
     end
   end
-  sep(L, "y(t)  (t " .. U.ge .. " 0)")
+  sep(L, "Paso 3: Antitransformada y(t)  (t " .. U.ge .. " 0)")
+  add(L, "A/(s-p) " .. U.arrow .. " A e^(pt);  par complejo " .. U.arrow .. " 2|A|e^(" .. U.sigma .. "t)cos(" .. W .. "t+" .. U.ang .. "A)")
   local txt = "y(t) ="
   for i, t in ipairs(terms) do
     if i == 1 then txt = txt .. " " .. (t[1] == "-" and "-" or "") .. t[2]
@@ -353,7 +356,9 @@ local function m_resp(v)
   if #terms == 0 then txt = txt .. " 0" end
   add(L, txt)
   -- modos
-  sep(L, "Modos de respuesta (polos de G)")
+  sep(L, "Paso 4: Modos de respuesta (polos de G)")
+  add(L, "Cada polo de G da un modo e^(pt). Re(p)<0: decae; Re(p)>0: diverge.")
+  add(L, "Mas veloz = el que decae primero = mayor |Re(p)|.")
   local fast, slow, diverge = nil, nil, false
   local seen = {}
   for _, r in ipairs(gp) do
@@ -392,7 +397,8 @@ end
 -- 3) Error en estado estacionario
 --------------------------------------------------------------------------
 local function errlines(L, e, A)
-  add(L, "Tipo del sistema N = " .. e.N .. "  (integradores de G0)")
+  add(L, "Tipo del sistema N = " .. e.N .. "  (n" .. "\194\186" .. " de polos en s=0 de G0)")
+  add(L, "(tipo 0: ep finito; tipo 1: ep=0, ev finito; tipo 2: ev=0, ea finito)")
   add(L, "Kp = lim G0 = " .. fmt(e.Kp) .. "   " .. U.arrow .. " ep = A/(1+Kp) = " .. fmt(e.ep))
   add(L, "Kv = lim sG0 = " .. fmt(e.Kv) .. "   " .. U.arrow .. " ev = A/Kv = " .. fmt(e.ev))
   add(L, "Ka = lim s" .. U.sq .. "G0 = " .. fmt(e.Ka) .. "   " .. U.arrow .. " ea = A/Ka = " .. fmt(e.ea))
@@ -503,6 +509,8 @@ local function m_routh(v)
       add(L, "P(s)|k=1 = " .. pstr(P1))
     end
     sep(L, "Rango de k estable (Routh)")
+    add(L, "Se exige 1a columna de Routh > 0; los limites son los k donde")
+    add(L, "un elemento se anula (polos sobre el eje j" .. W .. ").")
     local ivs, bounds = krange(function(kk) return charpoly(v, kk) end)
     if #ivs == 0 then add(L, "Ningun k en [-1e5,1e5] estabiliza el lazo") end
     for _, iv in ipairs(ivs) do
@@ -557,6 +565,7 @@ local function m_routh(v)
   end
   add(L, "1a columna: " .. table.concat(fc, ", "))
   add(L, "Cambios de signo: " .. ch .. "  " .. U.arrow .. " " .. ch .. " raiz(es) en SPD")
+  add(L, "(estable si toda la 1a columna tiene el mismo signo)")
   local roots = proots(P)
   add(L, "Raices: " .. rootsstr(roots))
   add(L, (stabilitytext(roots)))
@@ -566,22 +575,79 @@ end
 --------------------------------------------------------------------------
 -- 5) Respuesta en frecuencia y margenes
 --------------------------------------------------------------------------
-local function marginlines(L, o, label, maxpc)
+-- expresiones de |G(jw)| y angulo G(jw) a partir de polos y ceros
+local function freqformula(o)
+  local num, den, phz, php = {}, {}, {}, {}
+  local n0z, n0p = 0, 0
+  local function fac(r, isz)
+    local m, a = isz and num or den, isz and phz or php
+    if abs(r[1]) < 1e-11 and r[2] == 0 then
+      if isz then n0z = n0z + 1 else n0p = n0p + 1 end
+    elseif r[2] == 0 then
+      local c = fmt(abs(r[1]), 4)
+      m[#m + 1] = U.sqrt .. "(" .. W .. U.sq .. "+" .. c .. U.sq .. ")"
+      if r[1] < 0 then a[#a + 1] = "atan(" .. W .. "/" .. c .. ")"
+      else a[#a + 1] = "(180" .. DEG .. "-atan(" .. W .. "/" .. c .. "))" end
+    elseif r[2] > 0 then
+      local b, c = fmt(r[1] * r[1] + r[2] * r[2], 4), fmt(-2 * r[1], 4)
+      m[#m + 1] = U.sqrt .. "((" .. b .. "-" .. W .. U.sq .. ")" .. U.sq .. "+(" .. c .. W .. ")" .. U.sq .. ")"
+      a[#a + 1] = "atan2(" .. c .. W .. ", " .. b .. "-" .. W .. U.sq .. ")"
+    end
+  end
+  for _, r in ipairs(o.z) do fac(r, true) end
+  for _, r in ipairs(o.p) do fac(r, false) end
+  local K = fmt(abs(o.lead))
+  local ns = K .. ((#num > 0) and ("\194\183" .. table.concat(num, "\194\183")) or "")
+  local dpart = {}
+  if n0p - n0z > 0 then dpart[#dpart + 1] = W .. ((n0p - n0z > 1) and ("^" .. (n0p - n0z)) or "") end
+  for _, x in ipairs(den) do dpart[#dpart + 1] = x end
+  local ms = "|G0(j" .. W .. ")| = " .. ns .. ((#dpart > 0) and (" / [" .. table.concat(dpart, "\194\183") .. "]") or "")
+  local ph = {}
+  local nint = n0p - n0z
+  if nint ~= 0 then ph[#ph + 1] = fmt(-90 * nint) .. DEG end
+  if o.lead < 0 then ph[#ph + 1] = "-180" .. DEG end
+  for _, x in ipairs(phz) do ph[#ph + 1] = "+ " .. x end
+  for _, x in ipairs(php) do ph[#ph + 1] = "- " .. x end
+  if o.L ~= 0 then ph[#ph + 1] = "- " .. fmt(o.L) .. W .. "(180/" .. U.pi .. ")" end
+  local ps = U.ang .. "G0(j" .. W .. ") = " .. ((#ph > 0) and table.concat(ph, " "):gsub("^%+ ", "") or "0")
+  return ms, ps
+end
+
+-- margenes explicados paso a paso
+local function marginlines(L, o, label, maxpc, quiet)
   local m = margins(o)
   if label then add(L, label) end
+  if not quiet then
+    local ms, ps = freqformula(o)
+    add(L, "  " .. ms)
+    add(L, "  " .. ps)
+  end
+  -- paso 1: margen de fase
   if #m.gc == 0 then
-    add(L, "  Sin cruce de ganancia (|G|<1 o >1 siempre): MF = " .. U.inf)
+    add(L, "  a) |G0|=1 no tiene solucion " .. U.arrow .. " MF = " .. U.inf)
   end
   for i, c in ipairs(m.gc) do
-    add(L, "  " .. W .. "cg = " .. fmt(c.w) .. " rad/s, " .. U.ang .. "G = " .. fmt(c.ph) .. DEG .. "  MF = " .. fmt(c.MF) .. DEG)
+    add(L, "  a) MF: resolver |G0(j" .. W .. ")| = 1 " .. U.arrow .. " " .. W .. "cg = " .. fmt(c.w) .. " rad/s")
+    add(L, "     " .. U.ang .. "G0(j" .. W .. "cg) = " .. fmt(c.ph) .. DEG .. "  " .. U.arrow .. "  MF = 180" .. DEG .. " + (" .. fmt(c.ph) .. DEG .. ") = " .. fmt(c.MF) .. DEG)
   end
+  -- paso 2: margen de ganancia
   if #m.pc == 0 then
-    add(L, "  Sin cruce de fase -180" .. DEG .. ": MG = " .. U.inf)
+    add(L, "  b) " .. U.ang .. "G0 nunca llega a -180" .. DEG .. " " .. U.arrow .. " MG = " .. U.inf)
   end
   for i, c in ipairs(m.pc) do
-    if i <= (maxpc or 2) then
-      add(L, "  " .. W .. "cf = " .. fmt(c.w) .. " rad/s (" .. U.ang .. "G=" .. fmt(c.ph, 4) .. DEG .. "), |G| = " .. fmt(c.mag) .. "  MG = " .. fmt(c.MG) .. " (" .. fmt(db(c.MG), 4) .. " dB)")
+    if i <= (maxpc or 1) then
+      local tgt = fmt(c.ph, 4)
+      add(L, "  b) MG: resolver " .. U.ang .. "G0(j" .. W .. ") = " .. tgt .. DEG .. " " .. U.arrow .. " " .. W .. "cf = " .. fmt(c.w) .. " rad/s")
+      add(L, "     |G0(j" .. W .. "cf)| = " .. fmt(c.mag) .. "  " .. U.arrow .. "  MG = 1/" .. fmt(c.mag) .. " = " .. fmt(c.MG))
+      add(L, "     en dB: 20" .. "\194\183" .. "log10(" .. fmt(c.MG) .. ") = " .. fmt(db(c.MG), 4) .. " dB")
     end
+  end
+  local mf = m.gc[1] and m.gc[1].MF or INF
+  local mg = m.pc[1] and m.pc[1].MG or INF
+  if mf > 0 and mg > 1 then
+    add(L, "  c) MF > 0" .. DEG .. " y MG > 1 (" .. U.ge .. "0 dB) " .. U.arrow .. " lazo cerrado ESTABLE")
+  else
+    add(L, "  c) MF " .. U.le .. " 0" .. DEG .. " o MG " .. U.le .. " 1 " .. U.arrow .. " lazo cerrado INESTABLE")
   end
   return m
 end
@@ -597,7 +663,9 @@ local function m_freq(v)
   add(L, "G0 = " .. rstr(G0) .. (Ld ~= 0 and ("  " .. "\194\183" .. " e^(-" .. fmt(Ld) .. "s)") or ""))
   local o = freqobj(G0, Ld)
   sep(L, "Margenes de estabilidad")
-  local m = marginlines(L, o, nil)
+  add(L, "MF: fase extra que tolera el lazo antes de inestabilizarse.")
+  add(L, "MG: cuantas veces puede crecer la ganancia antes de inestabilizarse.")
+  local m = marginlines(L, o, nil, 2)
   local mf = m.gc[1] and m.gc[1].MF or INF
   local mg = m.pc[1] and m.pc[1].MG or INF
   if m.pc[1] then
@@ -640,7 +708,8 @@ local function m_place(v)
   local enulo = num(v, "enulo") or 0
   local estr = num(v, "estr") or 0
   local p3 = num(v, "p3")
-  sep(L, "Polos deseados")
+  sep(L, "Paso 1: Polos deseados pd")
+  add(L, "(polos de LC que producen el ts y Mp pedidos)")
   local z, wn
   if sig and wd then
     wn = sqrt(sig * sig + wd * wd); z = sig / wn
@@ -662,7 +731,7 @@ local function m_place(v)
 
   local zp, pp, lead = proots(Gp.n), proots(Gp.d), plead(Gp.n) / plead(Gp.d)
   local Np = pzeroroots(Gp.d) - pzeroroots(Gp.n)
-  sep(L, "Planta")
+  sep(L, "Paso 2: Planta")
   add(L, "Gp = " .. rstr(Gp))
   add(L, "Polos: " .. rootsstr(pp, 4) .. "   Ceros: " .. rootsstr(zp, 4))
   add(L, "Tipo de la planta: " .. Np)
@@ -688,7 +757,7 @@ local function m_place(v)
   end
 
   -- eleccion de integrador
-  sep(L, "Eleccion de estructura")
+  sep(L, "Paso 3: Integrador? (error estacionario)")
   local useI
   if estr == 3 or estr == 4 then useI = true
   elseif estr == 1 or estr == 2 then useI = false
@@ -706,25 +775,55 @@ local function m_place(v)
       add(L, "No se exige error nulo " .. U.arrow .. " sin integrador (se prueba P)")
     end
   end
+  if useI then add(L, "(el polo en s=0 del PI/PID hace el sistema tipo 1: ep = 0)") end
+  -- angulos de cada polo y cero hacia pd
+  sep(L, "Paso 4: Condicion de angulo en pd")
+  add(L, "Para que pd sea polo de LC: " .. U.ang .. "Gc(pd)Gp(pd) = -180" .. DEG)
+  add(L, U.ang .. "G(pd) = " .. "\206\163" .. U.theta .. "ceros - " .. "\206\163" .. U.theta .. "polos,  " .. U.theta .. " = angulo del vector (pd - raiz)")
   local mag, ph = gainphase_at(zp, pp, lead, -sig, wd)
-  add(L, U.ang .. "Gp(pd) = " .. fmt(ph) .. DEG .. "   |Gp(pd)| = " .. fmt(mag))
-  if useI then
-    local aI = atan2(wd, -sig) * R2D
-    ph = ph - aI
-    mag = mag / sqrt(sig * sig + wd * wd)
-    add(L, "Integrador aporta -" .. fmt(aI) .. DEG .. " " .. U.arrow .. " " .. U.ang .. "G = " .. fmt(ph) .. DEG)
+  local sump, sumz = 0, 0
+  local dp, dz_ = {}, {}
+  local function th(r) return atan2(wd - r[2], -sig - r[1]) * R2D end
+  local function dist(r) return sqrt((-sig - r[1]) ^ 2 + (wd - r[2]) ^ 2) end
+  local np = 0
+  for _, r in ipairs(pp) do
+    np = np + 1
+    local t = th(r)
+    sump = sump + t
+    dp[#dp + 1] = dist(r)
+    add(L, "  " .. U.theta .. "p" .. np .. " (polo " .. fmtc(r[1], r[2], 4) .. ") = atan2(" .. fmt(wd - r[2], 4) .. ", " .. fmt(-sig - r[1], 4) .. ") = " .. fmt(t) .. DEG)
   end
+  if useI then
+    np = np + 1
+    local t = atan2(wd, -sig) * R2D
+    sump = sump + t
+    dp[#dp + 1] = sqrt(sig * sig + wd * wd)
+    add(L, "  " .. U.theta .. "p" .. np .. " (integrador, polo 0) = " .. fmt(t) .. DEG)
+    ph = ph - t
+    mag = mag / sqrt(sig * sig + wd * wd)
+  end
+  local nzr = 0
+  for _, r in ipairs(zp) do
+    nzr = nzr + 1
+    local t = th(r)
+    sumz = sumz + t
+    dz_[#dz_ + 1] = dist(r)
+    add(L, "  " .. U.theta .. "z" .. nzr .. " (cero " .. fmtc(r[1], r[2], 4) .. ") = " .. fmt(t) .. DEG)
+  end
+  add(L, U.ang .. "G(pd) = " .. fmt(sumz) .. DEG .. " - " .. fmt(sump) .. DEG .. ((lead < 0) and " - 180" .. DEG .. " (K<0)" or "") .. " = " .. fmt(ph) .. DEG)
   local phi = -180 - ph
   while phi > 180 do phi = phi - 360 end
   while phi <= -180 do phi = phi + 360 end
   add(L, "Deficiencia: " .. PHI .. "d = -180" .. DEG .. " - (" .. fmt(ph) .. DEG .. ") = " .. fmt(phi) .. DEG)
+  add(L, "(" .. PHI .. "d = fase que deben aportar los ceros del controlador)")
+  sep(L, "Paso 5: Estructura minima")
   local nz
   if estr == 1 then nz = 0
   elseif estr == 2 or estr == 3 then nz = 1
   elseif estr == 4 then nz = 2
   else
     if abs(phi) < 0.5 then nz = 0; add(L, "|" .. PHI .. "d| " .. U.approx .. " 0 " .. U.arrow .. " la condicion de angulo ya se cumple: sin ceros")
-    elseif phi > 0 and phi < 90 then nz = 1; add(L, "0" .. DEG .. " < " .. PHI .. "d < 90" .. DEG .. " " .. U.arrow .. " basta UN cero")
+    elseif phi > 0 and phi < 90 then nz = 1; add(L, "0" .. DEG .. " < " .. PHI .. "d < 90" .. DEG .. " " .. U.arrow .. " basta UN cero (un cero aporta de 0" .. DEG .. " a 90" .. DEG .. ")")
     elseif phi >= 90 and phi < 180 then nz = 2; add(L, PHI .. "d " .. U.ge .. " 90" .. DEG .. " " .. U.arrow .. " un cero no basta: DOS ceros iguales (" .. PHI .. "d/2 c/u)")
     else
       add(L, PHI .. "d < 0: sobra fase; un cero no sirve.")
@@ -740,13 +839,15 @@ local function m_place(v)
     add(L, "los polos LC no pasaran por pd.")
   end
 
-  sep(L, "Calculo")
   local zc = nil
   local cmag = 1
   if nz > 0 then
+    sep(L, "Paso 6: Ubicacion del cero en s = -a")
     local phz = phi / nz
     zc = sig + wd / math.tan(phz * D2R)
-    add(L, "Cero: a = |Re pd| + Im pd/tan(" .. PHI .. ") = " .. fmt(sig) .. " + " .. fmt(wd) .. "/tan(" .. fmt(phz) .. DEG .. ")")
+    add(L, "El cero debe 've' a pd con angulo " .. PHI .. " = " .. fmt(phz) .. DEG .. ":")
+    add(L, "tan(" .. PHI .. ") = Im pd/(a - |Re pd|)  " .. U.arrow .. "  a = |Re pd| + Im pd/tan(" .. PHI .. ")")
+    add(L, "a = " .. fmt(sig) .. " + " .. fmt(wd) .. "/tan(" .. fmt(phz) .. DEG .. ")")
     add(L, "   a = " .. fmt(zc) .. "   (cero en s = " .. fmt(-zc) .. ")")
     if zc < 0 then add(L, "OJO: cero en SPD") end
     local dz = sqrt((zc - sig) ^ 2 + wd * wd)
@@ -754,13 +855,24 @@ local function m_place(v)
     add(L, "|pd + a| = " .. fmt(dz) .. (nz == 2 and ("  " .. U.arrow .. " |pd+a|" .. U.sq .. " = " .. fmt(cmag)) or ""))
   end
   local Kc = 1 / (mag * cmag)
-  add(L, "Magnitud: Kc = 1/|Gc'(pd)Gp(pd)| = " .. fmt(Kc))
+  sep(L, "Paso 7: Ganancia Kc (condicion de magnitud)")
+  add(L, "|Gc(pd)Gp(pd)| = 1,  |s - r| = distancia de pd a cada raiz")
+  local dps = {}
+  for _, d in ipairs(dp) do dps[#dps + 1] = fmt(d, 4) end
+  local nums = {}
+  for _, d in ipairs(dz_) do nums[#nums + 1] = fmt(d, 4) end
+  if nz > 0 then nums[#nums + 1] = "|pd+a|" .. (nz == 2 and U.sq or "") .. "=" .. fmt(cmag, 4) end
+  add(L, "Kc = (dist. a polos) / (K" .. "\194\183" .. "dist. a ceros)")
+  local nn = {fmt(abs(lead), 4)}
+  for _, d in ipairs(dz_) do nn[#nn + 1] = fmt(d, 4) end
+  if nz > 0 then nn[#nn + 1] = fmt(cmag, 4) .. ((nz == 2) and " [=|pd+a|" .. U.sq .. "]" or " [=|pd+a|]") end
+  add(L, "Kc = (" .. table.concat(dps, "\194\183") .. ") / (" .. table.concat(nn, "\194\183") .. ") = " .. fmt(Kc))
   -- controlador
   local cn = {Kc}
   if nz >= 1 then cn = pmul(cn, {zc, 1}) end
   if nz >= 2 then cn = pmul(cn, {zc, 1}) end
   local Gc = rat(cn, useI and {0, 1} or {1})
-  sep(L, "Controlador")
+  sep(L, "Paso 8: Controlador")
   local fact = fmt(Kc)
   if nz == 1 then fact = fact .. "(s + " .. fmt(zc) .. ")" elseif nz == 2 then fact = fact .. "(s + " .. fmt(zc) .. ")" .. U.sq end
   if useI then fact = fact .. "/s" end
@@ -781,7 +893,8 @@ local function m_place(v)
     add(L, "Kp = " .. fmt(Kc))
   end
   -- verificacion
-  sep(L, "Verificacion")
+  sep(L, "Paso 9: Verificacion")
+  add(L, "Polos LC = raices de 1 + Gc" .. "\194\183" .. "Gp = 0; deben incluir pd.")
   local G0 = rmul(Gc, Gp)
   local cp = padd(G0.d, G0.n)
   add(L, "1+GcGp=0: " .. pstr(pscale(cp, 1 / plead(cp))) .. " = 0")
@@ -802,7 +915,7 @@ local function m_place(v)
     add(L, "Polo adicional " .. fmtc(q[1], q[2], 4) .. ": |Re|/" .. SIG .. " = " .. fmt(abs(q[1]) / sig, 3) .. ((abs(q[1]) / sig >= 5) and " (" .. U.ge .. "5, despreciable)" or " (<5, influye)"))
   end
   add(L, (stabilitytext(r)))
-  sep(L, "Error estacionario (A=1)")
+  sep(L, "Paso 10: Error estacionario (A=1)")
   local e = sserrors(rsimplify(G0), 1)
   errlines(L, e, 1)
   if e.ep > 0 and e.ep < INF then
@@ -910,17 +1023,18 @@ local function m_empir(v)
   -- verificacion con retardo exacto
   if haveModel then
     sep(L, "Verificacion (retardo exacto)")
+    add(L, "Con G0 = Gc" .. "\194\183" .. "Gp y el retardo e^(-L" .. W .. "): a) MF en " .. W .. "cg, b) MG en " .. W .. "cf, c) estabilidad.")
     marginlines(L, freqobj(Gp, Ld), "Planta sola (Gc = 1):", 1)
     local base
     for i, c in ipairs(verify) do
-      local G0 = rsimplify(rmul(pidtf(c[2], c[3], c[4]), Gp))
+      local G0 = rmul(pidtf(c[2], c[3], c[4]), Gp)
       local m = marginlines(L, freqobj(G0, Ld), c[1] .. " (Kp=" .. fmt(c[2], 4) .. ", Ti=" .. fmt(c[3], 4) .. (c[4] and (", Td=" .. fmt(c[4], 4)) or "") .. "):", 1)
       if i == 1 and c == hhc then base = m end
     end
     if fK and hhc then
       local Kp2 = fK * hhc[2]
       sep(L, "Efecto de Kp x " .. fmt(fK) .. " (Ti fijo)")
-      local G0 = rsimplify(rmul(pidtf(Kp2, hhc[3], hhc[4]), Gp))
+      local G0 = rmul(pidtf(Kp2, hhc[3], hhc[4]), Gp)
       local m = marginlines(L, freqobj(G0, Ld), "Kp = " .. fmt(Kp2) .. ", Ti = " .. fmt(hhc[3]) .. ":", 1)
       local mf0 = base and base.gc[1] and base.gc[1].MF
       local mg0 = base and base.pc[1] and base.pc[1].MG
@@ -947,6 +1061,16 @@ end
 -- ayuda
 --------------------------------------------------------------------------
 local HELP = {
+  "== Que modulo usar segun el enunciado ==",
+  "'Mp y ts dados, hallar " .. U.zeta .. ", " .. U.wn .. ", polos' " .. U.arrow .. " 1",
+  "'Determine y(t) ante escalon de magnitud A / modos' " .. U.arrow .. " 2 (G, A=magnitud, entrada=1, lazo=0)",
+  "'ts y Mp de Y/R con K dado / polos dominantes / modelo reducido' " .. U.arrow .. " 3 (Gc=K, Gp)",
+  "'Y/R en funcion de K' " .. U.arrow .. " 3 con Gc = k y campo k vacio",
+  "'error estacionario / K para un error' " .. U.arrow .. " 4",
+  "'rango de K estable / Routh' " .. U.arrow .. " 5 (Gc = k, k vacio)",
+  "'MF, MG, frecuencias de cruce, |G(j" .. U.w .. ")|' " .. U.arrow .. " 6",
+  "'Disene P/PD/PI/PID para ts y Mp' " .. U.arrow .. " 7 (error nulo=1 si pide respuesta exacta)",
+  "'Ziegler-Nichols / rele / Ho-Hang-Cao' " .. U.arrow .. " 8 (K, " .. U.tau .. ", L del modelo)",
   "== Glosario ==",
   U.w .. "cg: cruce de GANANCIA (|G|=1, 0 dB). 'Frecuencia de corte'. Ahi se mide MF.",
   "MF = 180" .. U.deg .. " + " .. U.ang .. "G(j" .. U.w .. "cg). Estable si MF > 0.",
@@ -1000,11 +1124,11 @@ MODULES = {
     {"wd", U.w .. "d (=Im p)", "Parte imaginaria del polo (opcional)"},
   }},
   {title = "Respuesta y(t)", short = "fracciones parciales, modos", run = m_resp, fields = {
-    {"G", "G(s)", "Ej: 2/(s^3+4s^2+s+6) ; 20/((s+2)(s+1)(s-6))"},
-    {"A", "A", "Magnitud de la entrada (ej 5)", "1"},
-    {"entrada", "entrada", "1 escalon  2 rampa  0 impulso", "1"},
-    {"lazo", "lazo", "0 = usar G tal cual,  1 = G/(1+G)", "0"},
-    {"k", "k", "Valor de k (si se usa)"},
+    {"G", "G(s)", "La G(s) del enunciado. Ej: 2/(s^3+4s^2+s+6)"},
+    {"A", "magnitud A", "'escalon de magnitud 5' " .. U.arrow .. " escriba 5 (unitario = 1)", "1"},
+    {"entrada", "tipo entrada", "1 = escalon (lo normal), 2 = rampa, 0 = impulso", "1"},
+    {"lazo", "lazo", "0 = usar G tal cual (lo normal); 1 = cerrar lazo G/(1+G)", "0"},
+    {"k", "k", "Solo si G contiene k; si no, dejar vacio"},
   }},
   {title = "Polos y respuesta (LA/LC)", short = "GLC, polos, ts, Mp, reduccion", run = m_polos, fields = {
     {"Gc", "Gc(s)", "Controlador. Ej: 9   ,  3(s+9.389)   (vacio = 1)", "1"},
