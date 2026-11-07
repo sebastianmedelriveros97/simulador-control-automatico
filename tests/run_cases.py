@@ -5,7 +5,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 L = lua51.LuaRuntime(unpack_returned_tuples=True)
 for f in ("core.lua", "modules.lua"):
     L.execute(open(os.path.join(ROOT, "src", f), encoding="utf-8").read())
-MOD = {"spec": 1, "polos": 2, "error": 3, "routh": 4, "freq": 5, "place": 6, "emp": 7}
+MOD = {"spec": 1, "resp": 2, "polos": 3, "error": 4, "routh": 5, "freq": 6, "place": 7, "emp": 8}
 
 def run(mod, **vals):
     m = L.globals().MODULES[MOD[mod]]

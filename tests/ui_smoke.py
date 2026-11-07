@@ -26,7 +26,7 @@ def paint():
 def typ(text):
     for ch in text: g.on.charIn(ch)
 print(paint()[:4])
-g.on.charIn("6")                       # modulo 6
+g.on.charIn("7")                       # modulo 7 (localizacion de polos)
 typ("4/((s+1)(s+2))"); g.on.arrowDown()
 typ("2"); g.on.arrowDown(); g.on.arrowDown()
 typ("16.3")
@@ -37,10 +37,10 @@ print("\n".join(out))
 for i in range(30): g.on.arrowDown()
 print("--- scrolled ---"); print("\n".join(paint()[-6:]))
 g.on.escapeKey(); g.on.escapeKey()
-for i in range(1, 9):
+for i in range(1, 10):
     g.on.charIn(str(i)); g.on.enterKey(); paint(); g.on.escapeKey(); g.on.escapeKey()
 # teclas especiales del Nspire
-g.on.charIn("5"); typ("1/(s(s+1))"); g.on.backspaceKey(); typ(")"); g.on.arrowLeft(); g.on.deleteKey(); typ(")")
+g.on.charIn("6"); typ("1/(s(s+1))"); g.on.backspaceKey(); typ(")"); g.on.arrowLeft(); g.on.deleteKey(); typ(")")
 g.on.clearKey(); typ("−")
 print("valor tras clear + menos unicode:", repr(L.eval("VALS ~= nil")))
 st = g.on.save(); g.on.restore(st)

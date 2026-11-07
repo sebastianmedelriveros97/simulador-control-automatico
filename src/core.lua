@@ -856,6 +856,7 @@ function krange(fpoly)
         if st(c) == prev then a = c else b = c end
       end
       local kb = (a + b) / 2
+      if abs(kb) < 1e-8 then kb = 0 end
       bounds[#bounds + 1] = kb
       if cur then start = kb else intervals[#intervals + 1] = {start, kb}; start = nil end
     end
@@ -906,4 +907,95 @@ function Mp_from_zeta(z)
   if z >= 1 then return 0 end
   if z <= 0 then return 100 end
   return 100 * exp(-pi * z / sqrt(1 - z * z))
+end
+
+--------------------------------------------------------------------------
+-- fracciones parciales (residuos con polos multiples)
+--------------------------------------------------------------------------
+local function cmul(ar, ai, br, bi) return ar * br - ai * bi, ar * bi + ai * br end
+local function cdiv(ar, ai, br, bi)
+  local d = br * br + bi * bi
+  return (ar * br + ai * bi) / d, (ai * br - ar * bi) / d
+end
+
+-- coeficientes de Taylor de un polinomio real p en s0 (complejo), m terminos
+local function taylor(p, sr, si, m)
+  local cr, ci = {}, {}
+  for i = 1, #p do cr[i] = p[i]; ci[i] = 0 end
+  local out = {}
+  local n = #p
+  for k = 1, m do
+    -- division sintetica: el residuo es el coef. k-1
+    if n < 1 then out[k] = {0, 0}
+    else
+      local br, bi = cr[n], ci[n]
+      local qr, qi = {}, {}
+      for i = n - 1, 1, -1 do
+        qr[i], qi[i] = br, bi
+        local tr, ti = cmul(br, bi, sr, si)
+        br, bi = cr[i] + tr, ci[i] + ti
+      end
+      out[k] = {br, bi}
+      cr, ci = qr, qi
+      n = n - 1
+    end
+  end
+  return out
+end
+
+-- Y = N/D (estrictamente propia). Devuelve grupos {p={re,im}, m, c={...}}
+-- c[j] = coeficiente de 1/(s-p)^j
+function partialfractions(N, D)
+  if #N >= #D then error("Y(s) no es estrictamente propia") end
+  local roots = proots(D)
+  local groups = {}
+  for _, r in ipairs(roots) do
+    local found = nil
+    for _, g in ipairs(groups) do
+      local sc = math.max(1, abs(g.p[1]) + abs(g.p[2]))
+      if abs(g.p[1] - r[1]) + abs(g.p[2] - r[2]) < 1e-6 * sc then found = g; break end
+    end
+    if found then found.m = found.m + 1 else groups[#groups + 1] = {p = {r[1], r[2]}, m = 1} end
+  end
+  local lead = plead(D)
+  for _, g in ipairs(groups) do
+    local m = g.m
+    local pr, pi_ = g.p[1], g.p[2]
+    -- serie del denominador sin (s-p)^m
+    local dr, di = {lead}, {0}
+    for k = 2, m do dr[k] = 0; di[k] = 0 end
+    for _, h in ipairs(groups) do
+      if h ~= g then
+        local c_r, c_i = pr - h.p[1], pi_ - h.p[2]
+        for rep = 1, h.m do
+          -- multiplicar serie por (c + u)
+          local nr, ni = {}, {}
+          for k = 1, m do
+            local ar, ai = cmul(dr[k], di[k], c_r, c_i)
+            if k > 1 then ar = ar + dr[k - 1]; ai = ai + di[k - 1] end
+            nr[k], ni[k] = ar, ai
+          end
+          dr, di = nr, ni
+        end
+      end
+    end
+    local nt = taylor(N, pr, pi_, m)
+    local qr, qi = {}, {}
+    for k = 1, m do
+      local ar, ai = nt[k][1], nt[k][2]
+      for i = 2, k do
+        local tr, ti = cmul(dr[i], di[i], qr[k - i + 1], qi[k - i + 1])
+        ar, ai = ar - tr, ai - ti
+      end
+      qr[k], qi[k] = cdiv(ar, ai, dr[1], di[1])
+    end
+    g.c = {}
+    for k = 1, m do
+      local j = m - k + 1
+      g.c[j] = {qr[k], qi[k]}
+      local sc = math.max(1, abs(qr[k]) + abs(qi[k]))
+      if abs(g.c[j][2]) < 1e-9 * sc and g.p[2] == 0 then g.c[j][2] = 0 end
+    end
+  end
+  return groups
 end

@@ -168,7 +168,74 @@ end
 --------------------------------------------------------------------------
 -- 2) Polos, lazo cerrado y respuesta temporal
 --------------------------------------------------------------------------
+local function linstr(c0, c1)
+  -- texto de c0 + c1 k
+  local a, b = abs(c0) > 1e-12, abs(c1) > 1e-12
+  if not a and not b then return "0" end
+  local kt = (abs(c1 - 1) < 1e-12) and "k" or (fmt(c1) .. "k")
+  if not a then return kt end
+  if not b then return fmt(c0) end
+  return fmt(c0) .. (c1 < 0 and " - " or " + ") .. ((abs(abs(c1) - 1) < 1e-12) and "k" or (fmt(abs(c1)) .. "k"))
+end
+
+local function polyk_str(P0, P1)
+  -- polinomio con coeficientes lineales en k
+  local n = math.max(#P0, #P1)
+  local parts = {}
+  for i = n, 1, -1 do
+    local c0, c1 = P0[i] or 0, P1[i] or 0
+    if abs(c0) > 1e-12 or abs(c1) > 1e-12 then
+      local e = i - 1
+      local cs = linstr(c0, c1)
+      local v = (e == 0) and "" or ((e == 1) and "s" or ("s^" .. e))
+      if e > 0 and cs == "1" then cs = "" elseif e > 0 and (abs(c0) > 1e-12 and abs(c1) > 1e-12) then cs = "(" .. cs .. ")" end
+      parts[#parts + 1] = cs .. v
+    end
+  end
+  if #parts == 0 then return "0" end
+  return table.concat(parts, " + ")
+end
+
+local function m_polos_k(v, lazo)
+  local L = {}
+  local function G0at(kk) return rmul(tf(v, "Gc", kk, "1"), tf(v, "Gp", kk)) end
+  local g0, g1, g2 = G0at(0), G0at(1), G0at(2)
+  local function parts(f)
+    local p0, p1, p2 = f(g0), f(g1), f(g2)
+    local d1 = psub(p1, p0)
+    local chk = psub(psub(p2, p0), pscale(d1, 2))
+    for i = 1, #chk do if abs(chk[i]) > 1e-9 * math.max(1, abs(p2[i] or 0)) then error("k aparece en forma no lineal: ingrese un valor de k") end end
+    return p0, d1
+  end
+  -- normalizar: mismo denominador en los tres (no simplificar)
+  local N0, N1 = parts(function(g) return g.n end)
+  local D0, D1 = parts(function(g) return g.d end)
+  sep(L, "En funcion de k")
+  add(L, "G0(s) = [" .. polyk_str(N0, N1) .. "] / [" .. polyk_str(D0, D1) .. "]")
+  local C0, C1 = padd(D0, N0), padd(D1, N1)
+  if lazo == 1 then
+    add(L, "GLC(s) = G0/(1+G0) = [" .. polyk_str(N0, N1) .. "] / [" .. polyk_str(C0, C1) .. "]")
+    add(L, "Ec. caract.: " .. polyk_str(C0, C1) .. " = 0")
+    local n = math.max(#C0, #C1)
+    local lead0, lead1 = C0[n] or 0, C1[n] or 0
+    if n == 3 and abs(lead1) < 1e-12 and abs(lead0) > 1e-12 then
+      local l = lead0
+      add(L, "Comparando con s" .. U.sq .. " + 2" .. Z .. WN .. "s + " .. WN .. U.sq .. ":")
+      add(L, "  " .. WN .. U.sq .. " = " .. linstr((C0[1] or 0) / l, (C1[1] or 0) / l) .. "   " .. U.arrow .. " " .. WN .. " = " .. U.sqrt .. "(" .. linstr((C0[1] or 0) / l, (C1[1] or 0) / l) .. ")")
+      add(L, "  2" .. Z .. WN .. " = " .. linstr((C0[2] or 0) / l, (C1[2] or 0) / l) .. "   " .. U.arrow .. " " .. Z .. " = (" .. linstr((C0[2] or 0) / l, (C1[2] or 0) / l) .. ")/(2" .. WN .. ")")
+      if abs(C1[2] or 0) < 1e-12 then
+        add(L, "  " .. Z .. WN .. " = " .. fmt((C0[2] or 0) / l / 2) .. " fijo " .. U.arrow .. " ts no depende de k;")
+        add(L, "  al subir k sube " .. WN .. ", baja " .. Z .. " y sube Mp.")
+      end
+    end
+  end
+  add(L, "Ingrese k para evaluar polos, ts y Mp.")
+  return L
+end
+
 local function m_polos(v)
+  local lazo0 = num(v, "lazo") or 1
+  if num(v, "k") == nil and (usesk(v.Gc) or usesk(v.Gp)) then return m_polos_k(v, lazo0) end
   local L = {}
   local k = num(v, "k")
   local Gc = tf(v, "Gc", k, "1")
@@ -206,6 +273,118 @@ local function m_polos(v)
   end
   sep(L, "Respuesta temporal")
   dyn_report(L, T, poles, zeros)
+  return L
+end
+
+--------------------------------------------------------------------------
+-- 2) Respuesta temporal y(t) por fracciones parciales
+--------------------------------------------------------------------------
+local function expo(pr)
+  if abs(pr) < 1e-11 then return "" end
+  if abs(pr + 1) < 1e-12 then return "e^(-t)" end
+  if abs(pr - 1) < 1e-12 then return "e^(t)" end
+  return "e^(" .. fmt(pr) .. "t)"
+end
+
+local function m_resp(v)
+  local L = {}
+  local k = num(v, "k")
+  local G = tf(v, "G", k)
+  local lazo = num(v, "lazo") or 0
+  local A = num(v, "A") or 1
+  local ent = num(v, "entrada") or 1
+  G = rsimplify(G)
+  if lazo == 1 then G = closedloop(G) end
+  local R
+  if ent == 0 then R = rconst(A) elseif ent == 2 then R = rat({A}, {0, 0, 1}) else R = rat({A}, {0, 1}) end
+  local names = {[0] = "impulso R(s) = A", "escalon R(s) = A/s", "rampa R(s) = A/s" .. U.sq}
+  sep(L, "Y(s) = G(s)" .. "\194\183" .. "R(s)")
+  add(L, (lazo == 1 and "GLC" or "G") .. "(s) = " .. rstr(G))
+  add(L, "Entrada: " .. (names[ent] or names[1]) .. ",  A = " .. fmt(A))
+  local Y = rat(pmul(G.n, R.n), pmul(G.d, R.d))
+  add(L, "Y(s) = " .. rstr(Y))
+  local gp = proots(G.d)
+  add(L, "Polos de G: " .. rootsstr(gp))
+  local groups = partialfractions(Y.n, Y.d)
+  sep(L, "Fracciones parciales")
+  local terms = {}
+  local function addterm(c, body)
+    if abs(c) < 1e-11 then return end
+    local sgn = (c < 0) and "-" or "+"
+    local mag = abs(c)
+    local ms = fmt(mag)
+    if body ~= "" and abs(mag - 1) < 1e-12 then ms = "" end
+    terms[#terms + 1] = {sgn, ms .. body}
+  end
+  local function fact(n) local f = 1 for i = 2, n do f = f * i end return f end
+  for _, g in ipairs(groups) do
+    local pr, pim = g.p[1], g.p[2]
+    if pim >= 0 then
+      for j = 1, g.m do
+        local c = g.c[j]
+        local den = "(s" .. ((abs(pr) < 1e-11 and pim == 0) and "" or (" - (" .. fmtc(pr, pim, 4) .. ")")) .. ")" .. (j > 1 and ("^" .. j) or "")
+        if abs(pr) < 1e-11 and pim == 0 then den = "s" .. (j > 1 and ("^" .. j) or "") end
+        local cs = fmtc(c[1], c[2])
+        if c[2] ~= 0 and abs(c[1]) > 1e-11 then cs = "(" .. cs .. ")" end
+        add(L, cs .. " / " .. den .. ((pim > 0) and "  (+ conjugado)" or ""))
+        local tpow = j - 1
+        local tt = (tpow == 0) and "" or ((tpow == 1) and "t" or ("t^" .. tpow))
+        local f = fact(tpow)
+        if pim == 0 then
+          local ex = expo(pr)
+          local body = tt .. ((tt ~= "" and ex ~= "") and "\194\183" or "") .. ex
+          addterm(c[1] / f, body)
+        else
+          local a, b = c[1] / f, c[2] / f
+          local M, ph = 2 * sqrt(a * a + b * b), atan2(b, a) * R2D
+          local ex = expo(pr)
+          local body = tt .. ex .. "cos(" .. fmt(pim) .. "t" .. (ph < 0 and " - " or " + ") .. fmt(abs(ph), 4) .. DEG .. ")"
+          addterm(M, body)
+        end
+      end
+    end
+  end
+  sep(L, "y(t)  (t " .. U.ge .. " 0)")
+  local txt = "y(t) ="
+  for i, t in ipairs(terms) do
+    if i == 1 then txt = txt .. " " .. (t[1] == "-" and "-" or "") .. t[2]
+    else txt = txt .. " " .. t[1] .. " " .. t[2] end
+  end
+  if #terms == 0 then txt = txt .. " 0" end
+  add(L, txt)
+  -- modos
+  sep(L, "Modos de respuesta (polos de G)")
+  local fast, slow, diverge = nil, nil, false
+  local seen = {}
+  for _, r in ipairs(gp) do
+    local key = fmt(r[1], 6) .. "," .. fmt(abs(r[2]), 6)
+    if r[2] >= 0 and not seen[key] then
+      seen[key] = true
+      local nm = (r[2] > 0) and (expo(r[1]) .. "cos(" .. fmt(r[2]) .. "t)") or expo(r[1])
+      if nm == "" then nm = "constante (polo en 0)" end
+      if r[1] > 1e-9 then
+        add(L, nm .. ": DIVERGE (polo en SPD) " .. U.arrow .. " y(t)" .. U.arrow .. U.inf)
+        diverge = true
+      elseif r[1] >= -1e-9 then
+        add(L, nm .. ": no decae (polo en eje j" .. W .. ")")
+        diverge = true
+      else
+        local tau = 1 / abs(r[1])
+        add(L, nm .. ": converge, " .. TAU .. " = 1/" .. fmt(abs(r[1])) .. " = " .. fmt(tau) .. " s, se extingue en " .. U.approx .. "4" .. TAU .. " = " .. fmt(4 * tau) .. " s" .. ((r[2] > 0) and " (oscilatorio)" or ""))
+        if not fast or abs(r[1]) > abs(fast[1]) then fast = r end
+        if not slow or abs(r[1]) < abs(slow[1]) then slow = r end
+      end
+    end
+  end
+  if fast then add(L, "Modo mas veloz (decae primero): polo " .. fmtc(fast[1], fast[2], 4) .. " (mayor |Re|)") end
+  if slow then add(L, "Modo mas lento (dominante, fija ts): polo " .. fmtc(slow[1], slow[2], 4)) end
+  if diverge then
+    add(L, "SISTEMA INESTABLE: hay modos que no decaen;")
+    add(L, "y(t) no alcanza estado estable.")
+  else
+    add(L, "Sistema estable: ts(2%) " .. U.approx .. " 4/|Re dom| = " .. fmt(4 / abs(slow[1])) .. " s")
+    if ent == 1 and abs(G.d[1]) > 1e-12 then add(L, "y(" .. U.inf .. ") = A" .. "\194\183" .. "G(0) = " .. fmt(A * G.n[1] / G.d[1])) end
+  end
   return L
 end
 
@@ -786,9 +965,9 @@ local HELP = {
   "== Convenios ==",
   "ts(2%)=4/(" .. U.zeta .. U.wn .. "), ts(5%)=3/(" .. U.zeta .. U.wn .. "). MF en grados, MG lineal y dB.",
   "Retro unitaria negativa. Campos en blanco = desconocidos.",
-  "Estructura (mod. 6): 0 auto, 1 P, 2 PD, 3 PI, 4 PID.",
+  "Estructura (mod. 7): 0 auto, 1 P, 2 PD, 3 PI, 4 PID.",
   "error nulo: 1 = se exige seguimiento exacto (escalon).",
-  "Senal (mod. 3): 1 escalon, 2 rampa, 3 parabola.",
+  "Senal (mod. 4): 1 escalon, 2 rampa, 3 parabola.",
 }
 
 --------------------------------------------------------------------------
@@ -804,6 +983,13 @@ MODULES = {
     {"tp", "tp [s]", "Tiempo de peak (opcional)"},
     {"sigma", U.sigma .. " (=|Re p|)", "Parte real del polo (opcional)"},
     {"wd", U.w .. "d (=Im p)", "Parte imaginaria del polo (opcional)"},
+  }},
+  {title = "Respuesta y(t)", short = "fracciones parciales, modos", run = m_resp, fields = {
+    {"G", "G(s)", "Ej: 2/(s^3+4s^2+s+6) ; 20/((s+2)(s+1)(s-6))"},
+    {"A", "A", "Magnitud de la entrada (ej 5)", "1"},
+    {"entrada", "entrada", "1 escalon  2 rampa  0 impulso", "1"},
+    {"lazo", "lazo", "0 = usar G tal cual,  1 = G/(1+G)", "0"},
+    {"k", "k", "Valor de k (si se usa)"},
   }},
   {title = "Polos y respuesta (LA/LC)", short = "GLC, polos, ts, Mp, reduccion", run = m_polos, fields = {
     {"Gc", "Gc(s)", "Controlador. Ej: 9   ,  3(s+9.389)   (vacio = 1)", "1"},

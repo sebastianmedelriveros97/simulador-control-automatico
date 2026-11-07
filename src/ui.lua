@@ -148,7 +148,7 @@ local function paint_home(gc)
     if rh >= 20 then gc:drawString(m.short, 20, y + rh - 11, "top") end
   end
   col(gc, C.grey); gc:setFont("sansserif", "r", 7)
-  gc:drawString("1-8 o flechas + enter.  menu: modulos", 4, H() - 11, "top")
+  gc:drawString("1-9 o flechas + enter.  menu: modulos", 4, H() - 11, "top")
 end
 
 local FH = 18
