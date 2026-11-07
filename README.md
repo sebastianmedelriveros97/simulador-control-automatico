@@ -84,6 +84,18 @@ Módulo 8 → `K = 2`, `τ = 9`, `L = 1.5`, `MG = 3`, `MF = 60`, `factor Kp = 2`
 - Verificación con el retardo exacto: ωcg = 0,349, **MF = 60°**; ωcf = 1,047, **MG = 3**
 - Con Kp × 2 (Ti fijo): MF = 30° y MG = 1,5. La respuesta es más rápida, pero la estabilidad relativa es menor
 
+### Gráfico del plano s (módulo 7)
+
+Después de calcular un diseño por localización de polos, presione **`tab`** para ver el plano s:
+
+- **Rojo:** polos (×) y ceros (○) de la planta.
+- **Azul:** polos deseados pd.
+- **Verde:** lo que agrega el controlador (integrador ×, cero ○) y los polos adicionales de lazo cerrado.
+- Cada raíz se une con pd y su ángulo se marca con una letra griega (α, β, γ…). La leyenda explica cada uno, la suma ∠G(pd), la deficiencia φd y el ángulo φ del cero del controlador.
+- Las raíces muy lejanas se dibujan en el borde, con su valor.
+
+Teclas: ▲▼ desplazan la leyenda; `tab`, `esc` o `enter` vuelven al texto.
+
 ### Pruebas de años anteriores
 
 | Pregunta | Módulo y datos | Resultado de la app |

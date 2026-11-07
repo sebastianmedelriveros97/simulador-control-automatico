@@ -16,7 +16,7 @@ def run(mod, **vals):
     ok, res = L.globals().pcall(m.run, t)
     if not ok:
         return ["ERROR: " + str(res)]
-    return list(res.values())
+    return [res[i] for i in range(1, len(res) + 1)]
 
 if __name__ == "__main__":
     import json

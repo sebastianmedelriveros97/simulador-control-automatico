@@ -15,6 +15,8 @@ function GC:setColorRGB() end
 function GC:fillRect() end
 function GC:drawRect() end
 function GC:drawLine() end
+function GC:drawArc() end
+function GC:fillArc() end
 function GC:getStringWidth(s) return #s * 6 end
 function GC:getStringHeight(s) return 13 end
 function GC:drawString(s, x, y) assert(type(s)=="string", "drawString no string"); DRAWN[#DRAWN+1] = s end
@@ -45,5 +47,11 @@ g.on.clearKey(); typ("−")
 print("valor tras clear + menos unicode:", repr(L.eval("VALS ~= nil")))
 st = g.on.save(); g.on.restore(st)
 g.on.mouseDown(10, 40)
+# grafico del plano s (modulo 7)
+g.on.escapeKey(); g.on.escapeKey(); g.on.charIn("7")
+g.on.clearKey(); typ("4/((s+1)(s+2))")
+g.on.arrowDown(); g.on.clearKey(); typ("2"); g.on.arrowDown(); g.on.arrowDown(); g.on.clearKey(); typ("16.3"); g.on.enterKey()
+g.on.tabKey(); gr = paint(); assert any("plano" in x.lower() for x in gr), gr[:3]
+g.on.arrowDown(); paint(); g.on.tabKey(); paint()
 print("menu:", len(list(g.MENU.values())))
 print("OK UI")

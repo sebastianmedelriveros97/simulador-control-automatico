@@ -1787,43 +1787,60 @@ local function m_place(v)
   -- angulos de cada polo y cero hacia pd
   sep(L, "Paso 4: Condicion de angulo en pd")
   add(L, "Para que pd sea polo de LC: " .. U.ang .. "Gc(pd)Gp(pd) = -180" .. DEG)
-  add(L, U.ang .. "G(pd) = " .. "\206\163" .. U.theta .. "ceros - " .. "\206\163" .. U.theta .. "polos,  " .. U.theta .. " = angulo del vector (pd - raiz)")
+  add(L, U.ang .. "G(pd) = " .. "\206\163" .. "ang. ceros - " .. "\206\163" .. "ang. polos; cada angulo es el del vector raiz" .. U.arrow .. "pd")
+  add(L, "medido desde el eje real positivo (ver grafico: tecla tab)")
   local mag, ph = gainphase_at(zp, pp, lead, -sig, wd)
   local sump, sumz = 0, 0
   local dp, dz_ = {}, {}
   local function th(r) return atan2(wd - r[2], -sig - r[1]) * R2D end
   local function dist(r) return sqrt((-sig - r[1]) ^ 2 + (wd - r[2]) ^ 2) end
-  local np = 0
-  for _, r in ipairs(pp) do
-    np = np + 1
+  -- grafico del plano s (pantalla 2, tecla tab)
+  local GREEK = {"\206\177", "\206\178", "\206\179", "\206\180", "\206\181", "\206\183", "\206\186", "\206\187", "\206\188", "\206\189"}
+  local plot = {sig = sig, wd = wd, items = {}, legend = {}}
+  L.plot = plot
+  local gi = 0
+  local pletters, zletters = {}, {}
+  local function angitem(r, kind, desc)
+    gi = gi + 1
+    local g = GREEK[gi] or ("a" .. gi)
     local t = th(r)
+    plot.items[#plot.items + 1] = {x = r[1], y = r[2], kind = kind, label = g, ang = t}
+    plot.legend[#plot.legend + 1] = {g .. " = " .. desc .. " " .. fmtc(r[1], r[2], 3) .. U.arrow .. "pd: " .. fmt(t, 4) .. DEG, kind}
+    return g, t
+  end
+  for _, r in ipairs(pp) do
+    local g, t = angitem(r, "pp", "polo planta")
     sump = sump + t
+    pletters[#pletters + 1] = g
     dp[#dp + 1] = dist(r)
-    add(L, "  " .. U.theta .. "p" .. np .. " (polo " .. fmtc(r[1], r[2], 4) .. ") = atan2(" .. fmt(wd - r[2], 4) .. ", " .. fmt(-sig - r[1], 4) .. ") = " .. fmt(t) .. DEG)
+    add(L, "  " .. g .. " (polo " .. fmtc(r[1], r[2], 4) .. ") = atan2(" .. fmt(wd - r[2], 4) .. ", " .. fmt(-sig - r[1], 4) .. ") = " .. fmt(t) .. DEG)
   end
   if useI then
-    np = np + 1
-    local t = atan2(wd, -sig) * R2D
+    local g, t = angitem({0, 0}, "ci", "integrador (polo en 0)")
     sump = sump + t
+    pletters[#pletters + 1] = g
     dp[#dp + 1] = sqrt(sig * sig + wd * wd)
-    add(L, "  " .. U.theta .. "p" .. np .. " (integrador, polo 0) = " .. fmt(t) .. DEG)
+    add(L, "  " .. g .. " (integrador, polo 0) = atan2(" .. fmt(wd, 4) .. ", " .. fmt(-sig, 4) .. ") = " .. fmt(t) .. DEG)
     ph = ph - t
     mag = mag / sqrt(sig * sig + wd * wd)
   end
-  local nzr = 0
   for _, r in ipairs(zp) do
-    nzr = nzr + 1
-    local t = th(r)
+    local g, t = angitem(r, "pz", "cero planta")
     sumz = sumz + t
+    zletters[#zletters + 1] = g
     dz_[#dz_ + 1] = dist(r)
-    add(L, "  " .. U.theta .. "z" .. nzr .. " (cero " .. fmtc(r[1], r[2], 4) .. ") = " .. fmt(t) .. DEG)
+    add(L, "  " .. g .. " (cero " .. fmtc(r[1], r[2], 4) .. ") = " .. fmt(t) .. DEG)
   end
-  add(L, U.ang .. "G(pd) = " .. fmt(sumz) .. DEG .. " - " .. fmt(sump) .. DEG .. ((lead < 0) and " - 180" .. DEG .. " (K<0)" or "") .. " = " .. fmt(ph) .. DEG)
+  local zs = (#zletters > 0) and ("(" .. table.concat(zletters, "+") .. ")") or "0"
+  local ps = (#pletters > 0) and ("(" .. table.concat(pletters, "+") .. ")") or "0"
+  add(L, U.ang .. "G(pd) = " .. zs .. " - " .. ps .. " = " .. fmt(sumz) .. DEG .. " - " .. fmt(sump) .. DEG .. ((lead < 0) and " - 180" .. DEG .. " (K<0)" or "") .. " = " .. fmt(ph) .. DEG)
+  plot.legend[#plot.legend + 1] = {U.ang .. "G(pd) = " .. zs .. " - " .. ps .. " = " .. fmt(ph, 4) .. DEG, "txt"}
   local phi = -180 - ph
   while phi > 180 do phi = phi - 360 end
   while phi <= -180 do phi = phi + 360 end
   add(L, "Deficiencia: " .. PHI .. "d = -180" .. DEG .. " - (" .. fmt(ph) .. DEG .. ") = " .. fmt(phi) .. DEG)
   add(L, "(" .. PHI .. "d = fase que deben aportar los ceros del controlador)")
+  plot.legend[#plot.legend + 1] = {PHI .. "d = -180" .. DEG .. " - " .. U.ang .. "G(pd) = " .. fmt(phi, 4) .. DEG .. " (lo aporta el cero verde)", "txt"}
   sep(L, "Paso 5: Estructura minima")
   local nz
   if estr == 1 then nz = 0
@@ -1858,6 +1875,8 @@ local function m_place(v)
     add(L, "a = " .. fmt(sig) .. " + " .. fmt(wd) .. "/tan(" .. fmt(phz) .. DEG .. ")")
     add(L, "   a = " .. fmt(zc) .. "   (cero en s = " .. fmt(-zc) .. ")")
     if zc < 0 then add(L, "OJO: cero en SPD") end
+    plot.items[#plot.items + 1] = {x = -zc, y = 0, kind = "cz", label = PHI, ang = phz}
+    plot.legend[#plot.legend + 1] = {PHI .. " = cero controlador -" .. fmt(zc, 4) .. U.arrow .. "pd: " .. fmt(phz, 4) .. DEG .. (nz == 2 and " (x2)" or ""), "cz"}
     local dz = sqrt((zc - sig) ^ 2 + wd * wd)
     cmag = dz ^ nz
     add(L, "|pd + a| = " .. fmt(dz) .. (nz == 2 and ("  " .. U.arrow .. " |pd+a|" .. U.sq .. " = " .. fmt(cmag)) or ""))
@@ -1920,6 +1939,7 @@ local function m_place(v)
     if not (abs(q[1] + sig) < 1e-3 * math.max(1, sig) and abs(abs(q[2]) - wd) < 1e-3 * math.max(1, wd)) then others[#others + 1] = q end
   end
   for _, q in ipairs(others) do
+    plot.items[#plot.items + 1] = {x = q[1], y = q[2], kind = "lc"}
     add(L, "Polo adicional " .. fmtc(q[1], q[2], 4) .. ": |Re|/" .. SIG .. " = " .. fmt(abs(q[1]) / sig, 3) .. ((abs(q[1]) / sig >= 5) and " (" .. U.ge .. "5, despreciable)" or " (<5, influye)"))
   end
   add(L, (stabilitytext(r)))
@@ -2208,6 +2228,8 @@ local rlines = {}          -- lineas de resultado (sin ajustar)
 local rwrap, rwrapW = nil, -1
 local rscroll = 0
 local rerror = false
+local rplot = nil          -- datos del grafico (modulo de localizacion)
+local lscroll = 0          -- desplazamiento de la leyenda del grafico
 local VALS = {}            -- VALS[i][key] = texto
 
 local C = {
@@ -2278,10 +2300,11 @@ local function compute()
   local m = MODULES[cur]
   local ok, res = pcall(m.run, VALS[cur])
   if ok then
-    rlines = res; rerror = false
+    rlines = res; rerror = false; rplot = res.plot; lscroll = 0
   else
     local msg = tostring(res):gsub("^.-:%d+: ", "")
     rlines = {"ERROR", msg, "", "Revise los datos (esc para volver)."}
+    rplot = nil
     rerror = true
   end
   rwrap = nil; rscroll = 0
@@ -2331,7 +2354,7 @@ end
 local HOME = {y0 = 19, rh = 18, vis = 9, scroll = 0}
 
 local function paint_home(gc)
-  titlebar(gc, "Control Automatico", "v4 - APN")
+  titlebar(gc, "Control Automatico", "v5 - APN")
   -- alturas reales de las fuentes (evita superposiciones)
   gc:setFont("sansserif", "b", 10)
   local th = gc:getStringHeight("Ay")
@@ -2443,7 +2466,7 @@ end
 
 local function paint_result(gc)
   local m = MODULES[cur]
-  titlebar(gc, cur .. ". " .. m.title, "esc: volver")
+  titlebar(gc, cur .. ". " .. m.title, rplot and "tab: grafico" or "esc: volver")
   gc:setFont("sansserif", "r", 9)
   local lh = gc:getStringHeight("Ay")
   if lh < 11 then lh = 11 end
@@ -2487,10 +2510,158 @@ local function paint_result(gc)
   end
 end
 
+--------------------------------------------------------------------------
+-- grafico del plano s (localizacion de polos)
+--------------------------------------------------------------------------
+local GCOL = {
+  pp = {0xD0, 0x10, 0x10}, pz = {0xD0, 0x10, 0x10},      -- planta: rojo
+  pd = {0x10, 0x40, 0xE0},                               -- deseados: azul
+  ci = {0x00, 0x96, 0x20}, cz = {0x00, 0x96, 0x20},      -- controlador: verde
+  lc = {0x00, 0x96, 0x20}, txt = {0, 0, 0},
+}
+
+local function marker(gc, kind, x, y)
+  col(gc, GCOL[kind] or C.black)
+  if kind == "pp" or kind == "ci" or kind == "lc" then
+    gc:drawLine(x - 4, y - 4, x + 4, y + 4); gc:drawLine(x - 4, y + 4, x + 4, y - 4)
+    gc:drawLine(x - 3, y - 4, x + 5, y + 4); gc:drawLine(x - 3, y + 4, x + 5, y - 4)
+  elseif kind == "pz" or kind == "cz" then
+    gc:drawArc(x - 4, y - 4, 8, 8, 0, 360); gc:drawArc(x - 3, y - 3, 6, 6, 0, 360)
+  elseif kind == "pd" then
+    gc:fillArc(x - 4, y - 4, 8, 8, 0, 360)
+  end
+end
+
+local function paint_graph(gc)
+  titlebar(gc, "Plano s: angulos hacia pd", "tab: volver")
+  local P = rplot
+  gc:setFont("sansserif", "r", 7)
+  local lh = gc:getStringHeight("Ay")
+  if lh < 9 then lh = 9 end
+  local nleg = #P.legend + 1
+  local maxleg = math.max(3, math.floor((H() - 18) * 0.45 / lh))
+  local shown = math.min(nleg, maxleg)
+  if lscroll > nleg - shown then lscroll = nleg - shown end
+  if lscroll < 0 then lscroll = 0 end
+  local legH = shown * lh + 3
+  local top, bot = 19, H() - legH - 1
+  local left, right = 4, W() - 4
+  -- rango
+  local sig, wd = P.sig, P.wd
+  local R = math.max(sig, wd, 1e-6)
+  local lim = 6 * R
+  local xmin, xmax, ymin, ymax = -sig, 0, 0, wd
+  for _, it in ipairs(P.items) do
+    if math.abs(it.x) <= lim and math.abs(it.y) <= lim then
+      if it.x < xmin then xmin = it.x end
+      if it.x > xmax then xmax = it.x end
+      if it.y < ymin then ymin = it.y end
+      if it.y > ymax then ymax = it.y end
+    end
+  end
+  local mx = 0.18 * R
+  xmin, xmax = xmin - mx, xmax + 2.2 * mx
+  ymax = ymax + 0.15 * R
+  ymin = math.min(ymin - 0.1 * R, -0.25 * R)
+  local sc = math.min((right - left) / (xmax - xmin), (bot - top) / (ymax - ymin))
+  local cxw = (right - left) - sc * (xmax - xmin)
+  local cyh = (bot - top) - sc * (ymax - ymin)
+  local function X(x) return left + cxw / 2 + (x - xmin) * sc end
+  local function Y(y) return top + cyh / 2 + (ymax - y) * sc end
+  -- ejes
+  col(gc, C.box)
+  gc:drawLine(left, Y(0), right, Y(0))
+  if X(0) >= left and X(0) <= right then gc:drawLine(X(0), top, X(0), bot) end
+  col(gc, C.grey)
+  gc:drawString(U.sigma, right - 8, Y(0) - lh, "top")
+  gc:drawString("j" .. U.w, X(0) + 3, top, "top")
+  local pdx, pdy = X(-sig), Y(wd)
+  -- lineas y angulos
+  local placed = {}
+  for _, it in ipairs(P.items) do
+    if it.ang then
+      local x, y = X(it.x), Y(it.y)
+      local clipped = false
+      if x < left or x > right or y < top or y > bot then
+        -- recortar sobre el borde, en la misma direccion
+        local t = 1
+        local function fit(a0, a1, lo, hi)
+          if a1 < lo then t = math.min(t, (lo - a0) / (a1 - a0)) end
+          if a1 > hi then t = math.min(t, (hi - a0) / (a1 - a0)) end
+        end
+        fit(pdx, x, left, right); fit(pdy, y, top, bot)
+        x, y = pdx + (x - pdx) * t, pdy + (y - pdy) * t
+        clipped = true
+      end
+      col(gc, GCOL[it.kind] or C.black)
+      gc:drawLine(x, y, pdx, pdy)
+      -- arcos escalonados si hay raices muy juntas
+      local r = 13
+      for _, q in ipairs(placed) do
+        if math.abs(q[1] - x) < 16 and math.abs(q[2] - y) < 16 then r = r + 9 end
+      end
+      placed[#placed + 1] = {x, y}
+      local a0 = 0
+      local aa = it.ang
+      gc:drawArc(x - r, y - r, 2 * r, 2 * r, a0, aa)
+      local am = math.rad(aa / 2)
+      gc:setFont("sansserif", "b", 9)
+      local lx = x + (r + 3) * math.cos(am) - 3
+      local ly2 = y - (r + 3) * math.sin(am) - 7
+      lx = math.max(left, math.min(right - 10, lx))
+      ly2 = math.max(top, math.min(bot - 14, ly2))
+      gc:drawString(it.label, lx, ly2, "top")
+      gc:setFont("sansserif", "r", 7)
+      if clipped then
+        gc:drawString(fmt(it.x, 3), x + 2, y + 2, "top")
+      end
+      if not clipped then marker(gc, it.kind, x, y) end
+    end
+  end
+  -- polos de lazo cerrado adicionales
+  for _, it in ipairs(P.items) do
+    if not it.ang then
+      local x, y = X(it.x), Y(it.y)
+      if x >= left and x <= right and y >= top and y <= bot then marker(gc, it.kind, x, y) end
+    end
+  end
+  -- polos deseados
+  marker(gc, "pd", pdx, pdy)
+  local cy = Y(-wd)
+  if cy <= bot then marker(gc, "pd", pdx, cy) end
+  col(gc, GCOL.pd)
+  gc:setFont("sansserif", "r", 7)
+  local pl = "pd=" .. fmtc(-sig, wd, 3)
+  local pw = gc:getStringWidth(pl)
+  local px = pdx + 6
+  if px + pw > right then px = pdx - 6 - pw end
+  if px < left then px = left end
+  local py = pdy - lh - 2
+  if py < top then py = pdy + 5 end
+  gc:drawString(pl, px, py, "top")
+  -- leyenda
+  local ly = H() - legH
+  col(gc, C.hint); gc:fillRect(0, ly, W(), legH)
+  col(gc, C.box); gc:drawLine(0, ly, W(), ly)
+  local lines = {{"rojo: planta   azul: pd deseado   verde: controlador / polos LC", "txt"}}
+  for _, l in ipairs(P.legend) do lines[#lines + 1] = l end
+  for i = 1, shown do
+    local l = lines[lscroll + i]
+    if l then
+      col(gc, GCOL[l[2]] or C.black)
+      gc:drawString(l[1], 3, ly + 2 + (i - 1) * lh, "top")
+    end
+  end
+  if nleg > shown then
+    col(gc, C.grey); gc:drawString(U.arrow, W() - 10, ly + 2, "top")
+  end
+end
+
 function on.paint(gc)
   col(gc, C.white); gc:fillRect(0, 0, W(), H())
   if screen == "home" then paint_home(gc)
   elseif screen == "form" then paint_form(gc)
+  elseif screen == "graph" and rplot then paint_graph(gc)
   else paint_result(gc) end
 end
 
@@ -2508,6 +2679,7 @@ function on.arrowUp()
   elseif screen == "form" then
     local n = #MODULES[cur].fields
     fsel = (fsel - 2) % n + 1; cpos = #getval()
+  elseif screen == "graph" then lscroll = lscroll - 1
   else rscroll = rscroll - 1 end
   inval()
 end
@@ -2517,6 +2689,7 @@ function on.arrowDown()
   elseif screen == "form" then
     local n = #MODULES[cur].fields
     fsel = fsel % n + 1; cpos = #getval()
+  elseif screen == "graph" then lscroll = lscroll + 1
   else rscroll = rscroll + 1 end
   inval()
 end
@@ -2533,12 +2706,17 @@ function on.arrowRight()
   inval()
 end
 
-function on.tabKey() if screen == "form" then on.arrowDown() end end
+function on.tabKey()
+  if screen == "form" then on.arrowDown()
+  elseif screen == "result" and rplot then screen = "graph"; inval()
+  elseif screen == "graph" then screen = "result"; inval() end
+end
 function on.backtabKey() if screen == "form" then on.arrowUp() end end
 
 function on.enterKey()
   if screen == "home" then openmodule(hsel)
   elseif screen == "form" then compute()
+  elseif screen == "graph" then screen = "result"; inval()
   else
     if MODULES[cur].help then screen = "home" else screen = "form" end
     inval()
@@ -2548,6 +2726,7 @@ end
 function on.returnKey() on.enterKey() end
 
 function on.escapeKey()
+  if screen == "graph" then screen = "result"; inval(); return end
   if screen == "result" and not MODULES[cur].help then screen = "form"
   else screen = "home" end
   inval()
