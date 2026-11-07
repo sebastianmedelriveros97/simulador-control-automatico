@@ -947,6 +947,21 @@ end
 -- ayuda
 --------------------------------------------------------------------------
 local HELP = {
+  "== Glosario ==",
+  U.w .. "cg: cruce de GANANCIA (|G|=1, 0 dB). 'Frecuencia de corte'. Ahi se mide MF.",
+  "MF = 180" .. U.deg .. " + " .. U.ang .. "G(j" .. U.w .. "cg). Estable si MF > 0.",
+  U.w .. "cf: cruce de FASE (" .. U.ang .. "G = -180" .. U.deg .. "). Ahi se mide MG.",
+  "MG = 1/|G(j" .. U.w .. "cf)| (lineal); en dB: 20log(MG). Estable si MG > 1.",
+  "Kcrit = Ku: ganancia que lleva a oscilacion (= MG con Gc=1). Pu = Tcrit = 2" .. U.pi .. "/" .. U.w .. "cf.",
+  "HHC: " .. U.w .. "p = " .. U.w .. "cf esperada,  " .. U.w .. "g = " .. U.w .. "cg esperada (diseno).",
+  U.sigma .. " = |Re| del polo = " .. U.zeta .. U.wn .. ";  " .. U.w .. "d = Im del polo = " .. U.wn .. U.sqrt .. "(1-" .. U.zeta .. U.sq .. ").",
+  U.zeta .. ": amortiguamiento;  " .. U.wn .. ": frecuencia natural;  pd: polo deseado.",
+  U.phi .. "d: deficiencia angular (fase que debe aportar el controlador).",
+  "SPI/SPD: semiplano izquierdo (estable) / derecho (inestable).",
+  "Tipo N: n" .. "\194\186" .. " de integradores (polos en s=0) de G0 = Gc" .. "\194\183" .. "Gp.",
+  "Kp, Kv, Ka: constantes de error (posicion, velocidad, aceleracion).",
+  "ep, ev, ea: error estacionario ante escalon, rampa, parabola.",
+  U.tau .. ": constante de tiempo; L = td: retardo; K: ganancia estatica.",
   "== Teclas ==",
   "Flechas arriba/abajo: cambiar campo",
   "Flechas izq/der: mover cursor   del: borrar",

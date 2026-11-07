@@ -131,24 +131,50 @@ local function wraptext(gc, s, maxw)
   return out
 end
 
+local HOME = {y0 = 19, rh = 18, vis = 9, scroll = 0}
+
 local function paint_home(gc)
   titlebar(gc, "Control Automatico", "APN - examen")
+  -- alturas reales de las fuentes (evita superposiciones)
+  gc:setFont("sansserif", "b", 10)
+  local th = gc:getStringHeight("Ay")
+  gc:setFont("sansserif", "r", 9)
+  local fh = gc:getStringHeight("Ay")
+  local footH = fh + 4
   local y0 = 19
+  local rh = th + 2
   local n = #MODULES
-  local rh = math.floor((H() - y0 - 12) / n)
-  if rh > 24 then rh = 24 end
-  for i, m in ipairs(MODULES) do
-    local y = y0 + (i - 1) * rh
+  local vis = math.max(1, math.floor((H() - y0 - footH) / rh))
+  if vis > n then vis = n end
+  local sc = HOME.scroll
+  if hsel > sc + vis then sc = hsel - vis end
+  if hsel <= sc then sc = hsel - 1 end
+  HOME.y0, HOME.rh, HOME.vis, HOME.scroll = y0, rh, vis, sc
+  for i = sc + 1, math.min(n, sc + vis) do
+    local m = MODULES[i]
+    local y = y0 + (i - sc - 1) * rh
     if i == hsel then col(gc, C.sel); gc:fillRect(0, y, W(), rh) end
-    col(gc, C.focus); gc:setFont("sansserif", "b", 10)
+    gc:setFont("sansserif", "b", 10)
+    col(gc, C.focus)
     gc:drawString(tostring(i), 6, y + 1, "top")
     col(gc, C.black)
-    gc:drawString(m.title, 20, y + 1, "top")
-    col(gc, C.grey); gc:setFont("sansserif", "r", 7)
-    if rh >= 20 then gc:drawString(m.short, 20, y + rh - 11, "top") end
+    gc:drawString(m.title, 22, y + 1, "top")
   end
-  col(gc, C.grey); gc:setFont("sansserif", "r", 7)
-  gc:drawString("1-9 o flechas + enter.  menu: modulos", 4, H() - 11, "top")
+  if n > vis then
+    local tot = vis * rh
+    local bh = math.max(8, tot * vis / n)
+    local by = y0 + (tot - bh) * sc / (n - vis)
+    col(gc, C.focus); gc:fillRect(W() - 3, by, 2, bh)
+  end
+  -- pie: descripcion del modulo seleccionado
+  local fy = H() - footH
+  col(gc, C.hint); gc:fillRect(0, fy, W(), footH)
+  col(gc, C.box); gc:drawLine(0, fy, W(), fy)
+  gc:setFont("sansserif", "r", 9)
+  col(gc, C.grey)
+  local txt = MODULES[hsel].short .. "   (enter)"
+  while gc:getStringWidth(txt) > W() - 8 and #txt > 1 do txt = txt:sub(1, prevchar(txt, #txt)) end
+  gc:drawString(txt, 4, fy + 2, "top")
 end
 
 local FH = 18
@@ -379,11 +405,8 @@ end
 
 function on.mouseDown(x, y)
   if screen == "home" then
-    local y0 = 19
-    local rh = math.floor((H() - y0 - 12) / #MODULES)
-    if rh > 24 then rh = 24 end
-    local i = math.floor((y - y0) / rh) + 1
-    if i >= 1 and i <= #MODULES then
+    local i = HOME.scroll + math.floor((y - HOME.y0) / HOME.rh) + 1
+    if y >= HOME.y0 and i >= 1 and i <= #MODULES and i <= HOME.scroll + HOME.vis then
       if i == hsel then openmodule(i) else hsel = i; inval() end
     end
   elseif screen == "form" then
