@@ -45,10 +45,31 @@ local function view(L, v) L.views = L.views or {}; L.views[#L.views + 1] = v end
 -- recuadro de respuestas al inicio del resultado
 local function say(L, txt) L.say = L.say or {}; L.say[#L.say + 1] = txt end
 
+-- resultados clave para comparar (tecla c)
+local function metric(L, key, label, val, unit)
+  L.met = L.met or {}
+  for _, m in ipairs(L.met) do if m.key == key then m.val = val; return end end
+  L.met[#L.met + 1] = {key = key, label = label, val = val, unit = unit or ""}
+end
+
 -- frases individuales de especificaciones de 2o orden
 local function sayspecs(L, z, wn)
   local Zs, WNs, S_ = U.zeta, U.wn, U.sigma
   local sg = z * wn
+  metric(L, "zeta", Zs, z)
+  metric(L, "wn", WNs, wn, "rad/s")
+  metric(L, "sigma", S_ .. " = " .. Zs .. WNs, sg)
+  metric(L, "ts2", "ts(2%)", 4 / sg, "s")
+  metric(L, "ts5", "ts(5%)", 3 / sg, "s")
+  if z < 1 then
+    local wd_ = wn * sqrt(1 - z * z)
+    metric(L, "wd", U.w .. "d", wd_, "rad/s")
+    metric(L, "tr", "tr", (pi - math.acos(z)) / wd_, "s")
+    metric(L, "tp", "tp", pi / wd_, "s")
+    metric(L, "Mp", "Mp", Mp_from_zeta(z), "%")
+  else
+    metric(L, "Mp", "Mp", 0, "%")
+  end
   say(L, "El coeficiente de amortiguamiento es " .. Zs .. " = " .. fmt(z, 4) .. " y la frecuencia natural es " .. WNs .. " = " .. fmt(wn, 4) .. " rad/s.")
   say(L, "El tiempo de asentamiento al 2% es ts(2%) = 4/(" .. Zs .. WNs .. ") = 4/" .. fmt(sg, 4) .. " = " .. fmt(4 / sg, 4) .. " s.")
   say(L, "El tiempo de asentamiento al 5% es ts(5%) = 3/(" .. Zs .. WNs .. ") = 3/" .. fmt(sg, 4) .. " = " .. fmt(3 / sg, 4) .. " s.")
@@ -73,6 +94,7 @@ local function summary(L, items)
   if L.chainhelp then
     for _, h in ipairs(L.chainhelp) do out[#out + 1] = h end
   end
+  if L.met then out[#out + 1] = "Tecla c: modificar datos y COMPARAR con este resultado" end
   out[#out + 1] = "== Desarrollo =="
   for i = #out, 1, -1 do table.insert(L, 1, out[i]) end
 end
@@ -401,12 +423,15 @@ local function m_polos(v)
     end
     do
       say(L, ((lazo == 1) and "La funcion de transferencia de lazo cerrado es GLC(s) = Y(s)/R(s) = " or "La funcion de transferencia es G(s) = ") .. rstr(T) .. ".")
+      metric(L, "estable", "estabilidad", st and 1 or 0)
+      metric(L, "polos", "polos LC", rootsstr(poles, 4))
       say(L, "Su ecuacion caracteristica es " .. pstr(T.d) .. " = 0, cuyos polos son " .. rootsstr(poles, 4) .. "; por lo tanto el sistema es " .. (st and "estable (todos los polos en el semiplano izquierdo)." or "NO estable."))
       if st and #poles >= 1 then
         local dom = poles[1]
         local nd = (dom[2] ~= 0) and 2 or 1
         if #poles > nd then
           local ratio = abs(poles[nd + 1][1]) / abs(dom[1])
+          metric(L, "ratio", "separacion de polos", ratio)
           if ratio >= 5 then
             say(L, ((nd == 2) and ("Los polos dominantes son " .. fmt(dom[1], 4) .. " " .. PM .. " j" .. fmt(abs(dom[2]), 4)) or ("El polo dominante es " .. fmt(dom[1], 4))) .. ", ya que el siguiente polo esta " .. fmt(ratio, 3) .. " veces mas lejos del eje imaginario (" .. U.ge .. " 5); por ello es razonable aproximar por un modelo de orden " .. nd .. " que conserva la ganancia estatica.")
             local dpp = {dom}
@@ -425,6 +450,7 @@ local function m_polos(v)
           sayspecs(L, zz, wnn)
         else
           local tau1 = 1 / abs(dom[1])
+          metric(L, "tau", TAU .. " dominante", tau1, "s"); metric(L, "ts2", "ts(2%)", 4 * tau1, "s"); metric(L, "Mp", "Mp", 0, "%")
           say(L, "La constante de tiempo dominante es " .. TAU .. " = 1/" .. fmt(abs(dom[1]), 4) .. " = " .. fmt(tau1, 4) .. " s.")
           say(L, "El tiempo de asentamiento al 2% es ts(2%) = 4" .. TAU .. " = " .. fmt(4 * tau1, 4) .. " s, y al 5% es ts(5%) = 3" .. TAU .. " = " .. fmt(3 * tau1, 4) .. " s.")
           say(L, "Como el polo dominante es real, no hay sobrepaso: Mp = 0 %.")
@@ -432,7 +458,12 @@ local function m_polos(v)
         if m.Mp and #poles > 2 then
           say(L, "(Comprobacion con la respuesta exacta del sistema completo: " .. metricstext(m) .. ".)")
         end
-        if m.yss then say(L, "El valor final ante el escalon es y(" .. U.inf .. ") = " .. fmt(m.yss) .. ".") end
+        if m.yss then
+          say(L, "El valor final ante el escalon es y(" .. U.inf .. ") = " .. fmt(m.yss) .. ".")
+          metric(L, "yss", "y(" .. U.inf .. ")", m.yss)
+          metric(L, "ess", "error escalon", A - m.yss)
+          if #poles > 2 and m.Mp then metric(L, "Mpreal", "Mp real (simulado)", m.Mp, "%") end
+        end
       end
     end
     chain(L, "4", 4, {Gc = v.Gc or "1", Gp = v.Gp, A = v.A or "1", k = v.k or "", eobj = "", senal = "1"}, "error estacionario de este lazo")
@@ -573,6 +604,10 @@ local function m_resp(v)
       curves = {{t = ts, y = ys, name = "y(t) " .. (diverge and "(diverge)" or "")}},
       marks = yss and {Mp = m.Mp, tp = m.tp, ymax = ymax, ts = m.ts2} or nil})
     local S = {txt}
+    metric(L, "estable", "estabilidad", diverge and 0 or 1)
+    if slow then metric(L, "dom", "Re polo dominante", slow[1]); metric(L, "ts2", "ts(2%) " .. U.approx .. " 4/|Re dom|", 4 / abs(slow[1]), "s") end
+    if fast then metric(L, "fast", "Re polo mas veloz", fast[1]) end
+    if yss then metric(L, "yss", "y(" .. U.inf .. ")", yss); if m.Mp then metric(L, "Mp", "Mp (medido)", m.Mp, "%") end end
     say(L, "La respuesta temporal ante " .. ((ent == 0) and "un impulso" or ((ent == 2) and "una rampa" or "un escalon")) .. " de magnitud " .. fmt(A) .. " es " .. txt .. ".")
     if diverge then
       say(L, "El sistema es INESTABLE: existen modos con parte real positiva (o nula) que no decaen, por lo que y(t) crece sin limite y nunca alcanza el estado estable; no tiene sentido hablar del modo mas veloz para llegar al estado estable.")
@@ -666,6 +701,7 @@ local function m_error(v)
     local S = {}
     for _, kk in ipairs(sols) do S[#S + 1] = "k = " .. fmt(kk, 6) end
     if #S == 0 then S[1] = "sin solucion" end
+    if sols[1] then metric(L, "ksol", "k requerido", sols[#sols]) end
     local pos = {}
     for _, kk in ipairs(sols) do if kk > 0 then pos[#pos + 1] = fmt(kk, 6) end end
     if #pos > 0 then
@@ -687,6 +723,9 @@ local function m_error(v)
   local e = sserrors(G0, A)
   errlines(L, e, A)
   add(L, "Parabola: r(t)=A t" .. U.sq .. "/2 (R=A/s" .. "\194\179" .. ")")
+  metric(L, "N", "tipo N", e.N); metric(L, "Kp", "Kp", e.Kp); metric(L, "Kv", "Kv", e.Kv); metric(L, "Ka", "Ka", e.Ka)
+  metric(L, "ep", "ep (escalon)", e.ep); metric(L, "ev", "ev (rampa)", e.ev); metric(L, "ea", "ea (parabola)", e.ea)
+  metric(L, "estable", "estabilidad", ok and 1 or 0)
   say(L, "La funcion de lazo abierto es G0(s) = " .. rstr(G0) .. ", que tiene " .. math.max(e.N, 0) .. " integrador(es): el sistema es tipo " .. e.N .. ".")
   if not ok then say(L, "OJO: el lazo cerrado no es estable, por lo que el teorema del valor final no es aplicable.") end
   say(L, "Las constantes de error son Kp = " .. fmt(e.Kp) .. ", Kv = " .. fmt(e.Kv) .. " y Ka = " .. fmt(e.Ka) .. ".")
@@ -1054,6 +1093,18 @@ local function m_routh(v)
     if #S == 0 then S[1] = "Ningun k estabiliza el lazo" end
     if lin then say(L, "La ecuacion caracteristica de lazo cerrado es " .. polyk_str(P0, d1) .. " = 0.") end
     do
+      local kmax, kmin = nil, nil
+      for _, iv in ipairs(ivs) do if iv[2] > 0 then kmax = iv[2]; kmin = math.max(iv[1], 0) end end
+      if kmax then metric(L, "kmax", "k maximo estable", kmax); metric(L, "kmin", "k minimo estable", kmin) end
+      for _, kb in ipairs(bounds) do
+        if kb > 0 then
+          for _, q in ipairs(proots(charpoly(v, kb))) do
+            if abs(q[1]) < 1e-4 * math.max(1, abs(q[2])) and q[2] > 1e-6 then metric(L, "wosc", U.w .. " de oscilacion", q[2], "rad/s"); break end
+          end
+        end
+      end
+    end
+    do
       local phys = {}
       for _, iv in ipairs(ivs) do
         local a, b = math.max(iv[1], 0), iv[2]
@@ -1120,6 +1171,9 @@ local function m_routh(v)
   add(L, (stabilitytext(roots)))
   do
     local S = {"Cambios de signo en 1a columna: " .. ch, (stabilitytext(roots))}
+    metric(L, "cambios", "cambios de signo", ch)
+    metric(L, "estable", "estabilidad", isstable(roots) and 1 or 0)
+    metric(L, "polos", "polos LC", rootsstr(roots, 4))
     say(L, "La ecuacion caracteristica es " .. pstr(P) .. " = 0.")
     say(L, "En la primera columna de la tabla de Routh hay " .. ch .. " cambio(s) de signo, por lo que hay " .. ch .. " polo(s) en el semiplano derecho: el sistema en lazo cerrado es " .. ((ch == 0 and isstable(roots)) and "ESTABLE." or ((ch == 0) and "criticamente estable (polos sobre el eje j" .. W .. ")." or "INESTABLE.")))
     if blank(v.P) then
@@ -1299,6 +1353,9 @@ local function m_freq(v)
     S[#S + 1] = m.gc[1] and (W .. "cg = " .. fmt(m.gc[1].w) .. " rad/s,  MF = " .. fmt(m.gc[1].MF, 4) .. DEG) or ("MF = " .. U.inf)
     S[#S + 1] = m.pc[1] and (W .. "cf = " .. fmt(m.pc[1].w) .. " rad/s,  MG = " .. fmt(m.pc[1].MG, 4) .. " (" .. fmt(db(m.pc[1].MG), 4) .. " dB)") or ("MG = " .. U.inf)
     S[#S + 1] = (mf > 0 and mg > 1) and "Lazo cerrado ESTABLE" or "Lazo cerrado INESTABLE"
+    if m.gc[1] then metric(L, "wcg", U.w .. "cg", m.gc[1].w, "rad/s"); metric(L, "MF", "MF", m.gc[1].MF, DEG) end
+    if m.pc[1] then metric(L, "wcf", U.w .. "cf", m.pc[1].w, "rad/s"); metric(L, "MG", "MG", m.pc[1].MG); metric(L, "MGdB", "MG [dB]", db(m.pc[1].MG), "dB") end
+    metric(L, "estable", "estabilidad", (mf > 0 and mg > 1) and 1 or 0)
     if m.gc[1] then say(L, "La frecuencia de cruce de ganancia (|G0(j" .. W .. ")| = 1) es " .. W .. "cg = " .. fmt(m.gc[1].w, 4) .. " rad/s; ahi la fase es " .. fmt(m.gc[1].ph, 4) .. DEG .. ", por lo que el margen de fase es MF = 180" .. DEG .. " + (" .. fmt(m.gc[1].ph, 4) .. DEG .. ") = " .. fmt(m.gc[1].MF, 4) .. DEG .. ".")
     else say(L, "La magnitud no cruza 1 (0 dB), por lo que el margen de fase es infinito.") end
     if m.pc[1] then say(L, "La frecuencia de cruce de fase (" .. U.ang .. "G0 = -180" .. DEG .. ") es " .. W .. "cf = " .. fmt(m.pc[1].w, 4) .. " rad/s; ahi |G0| = " .. fmt(m.pc[1].mag, 4) .. ", por lo que el margen de ganancia es MG = 1/" .. fmt(m.pc[1].mag, 4) .. " = " .. fmt(m.pc[1].MG, 4) .. " (" .. fmt(db(m.pc[1].MG), 4) .. " dB).")
@@ -1609,6 +1666,18 @@ local function m_place(v)
     L.res = {phi = phi, a = zc or 0, Kc = Kc}
     do
       local wnn = sqrt(sig * sig + wd * wd)
+      metric(L, "zeta", U.zeta, sig / wnn); metric(L, "wn", U.wn, wnn, "rad/s")
+      metric(L, "sigma", U.sigma .. " (|Re pd|)", sig); metric(L, "wd", U.w .. "d (Im pd)", wd)
+      metric(L, "phi", PHI .. "d", phi, DEG)
+      metric(L, "estr", "estructura", names[nz])
+      if zc then metric(L, "a", "cero a", zc) end
+      metric(L, "Kc", "Kc", Kc)
+      metric(L, "ep", "ep (escalon)", e.ep)
+      if st and m.Mp then metric(L, "Mpreal", "Mp real", m.Mp, "%") end
+      if st and m.ts2 then metric(L, "tsreal", "ts(2%) real", m.ts2, "s") end
+    end
+    do
+      local wnn = sqrt(sig * sig + wd * wd)
       local zz = sig / wnn
       say(L, "De Mp y ts se obtiene " .. Z .. " = " .. fmt(zz, 4) .. " y " .. WN .. " = " .. fmt(wnn, 4) .. " rad/s; los polos deseados de lazo cerrado son pd = -" .. fmt(sig, 4) .. " " .. PM .. " j" .. fmt(wd, 4) .. ".")
     end
@@ -1825,6 +1894,15 @@ local function m_empir(v)
       if tau2 then gp = string.format("%.7g/((%.7g*s+1)*(%.7g*s+1))", K, tau, tau2) end
       chain(L, "6", 6, {Gc = gtxt, Gp = gp, L = string.format("%.7g", Ld), k = ""}, "Bode / margenes del lazo HHC")
     end
+    if haveModel then metric(L, "znKp", "ZN-LA PI Kp", 0.9 * tau / (K * Ld)); metric(L, "znTi", "ZN-LA PI Ti", 3.33 * Ld, "s") end
+    if Ku then metric(L, "Ku", "Ku", Ku) end
+    if hhc then
+      metric(L, "hKp", "HHC Kp", hhc[2]); metric(L, "hTi", "HHC Ti", hhc[3], "s")
+      local G0m = rmul(pidtf(hhc[2], hhc[3], hhc[4]), Gp)
+      local mm0 = margins(freqobj(G0m, Ld))
+      if mm0.gc[1] then metric(L, "wcg", U.w .. "cg (HHC)", mm0.gc[1].w, "rad/s"); metric(L, "MF", "MF (HHC)", mm0.gc[1].MF, DEG) end
+      if mm0.pc[1] then metric(L, "MG", "MG (HHC)", mm0.pc[1].MG) end
+    end
     if haveModel then say(L, "Por Ziegler-Nichols (curva de reaccion), el controlador PI es Kp = 0.9" .. TAU .. "/(KL) = " .. fmt(0.9 * tau / (K * Ld), 4) .. " y Ti = 3.33L = " .. fmt(3.33 * Ld, 4) .. " s.") end
     if Ku and Pu then say(L, "Por Ziegler-Nichols en lazo cerrado (Ku = " .. fmt(Ku, 4) .. ", Pu = " .. fmt(Pu, 4) .. " s), el controlador PI es Kp = 0.45Ku = " .. fmt(0.45 * Ku, 4) .. " y Ti = Pu/1.2 = " .. fmt(Pu / 1.2, 4) .. " s.") end
     if hhc then
@@ -1903,6 +1981,7 @@ local function m_ident(v)
     curves = {{t = ts, y = ys, name = "modelo FOPDT"}},
     legend = {"K = " .. fmt(K, 4) .. ",  " .. TAU .. " = " .. fmt(tau, 4) .. " s,  L = " .. fmt(Ld, 4) .. " s"}})
   chain(L, "8", 8, {K = string.format("%.7g", K), tau = string.format("%.7g", tau), L = string.format("%.7g", Ld), tau2 = ""}, "llevar el modelo a Sintonia (ZN / HHC)")
+  metric(L, "K", "K", K); metric(L, "tau", TAU, tau, "s"); metric(L, "L", "L", Ld, "s"); metric(L, "Lt", "L/" .. TAU, Ld / tau)
   say(L, "A partir de la curva de reaccion, la ganancia es K = " .. fmt(K, 4) .. ", la constante de tiempo es " .. TAU .. " = " .. fmt(tau, 4) .. " s y el retardo es L = " .. fmt(Ld, 4) .. " s.")
   say(L, "El modelo identificado es Gp(s) = " .. fmt(K, 4) .. "e^(-" .. fmt(Ld, 4) .. "s)/(" .. fmt(tau, 4) .. "s + 1).")
   summary(L, {"K = " .. fmt(K) .. ",  " .. TAU .. " = " .. fmt(tau) .. " s,  L = " .. fmt(Ld) .. " s",
@@ -2101,6 +2180,9 @@ local HELP = {
   "Arriba: RESPUESTAS (lo que se escribe en la hoja). Abajo: desarrollo.",
   "tab: graficos (plano s, y(t), Bode, lugar de raices).",
   "Teclas 3/4/6/8: enviar el resultado a otro modulo (se indica en RESPUESTAS).",
+  "Tecla c: guarda el resultado como caso A, abre los datos para modificarlos",
+  "  y al calcular muestra la COMPARACION A " .. U.arrow .. " B con razonamiento.",
+  "  (menu > Editar > Quitar comparacion para volver a lo normal)",
   "== Glosario ==",
   U.w .. "cg: cruce de GANANCIA (|G|=1, 0 dB). 'Frecuencia de corte'. Ahi se mide MF.",
   "MF = 180" .. U.deg .. " + " .. U.ang .. "G(j" .. U.w .. "cg). Estable si MF > 0.",
@@ -2138,6 +2220,161 @@ local HELP = {
   "error nulo: 1 = se exige seguimiento exacto (escalon).",
   "Senal (mod. 4): 1 escalon, 2 rampa, 3 parabola.",
 }
+
+
+--------------------------------------------------------------------------
+-- comparacion A -> B (tecla c)
+--------------------------------------------------------------------------
+local function rel(a, b)
+  if a == b then return true end
+  if a ~= a or b ~= b or abs(a) == INF or abs(b) == INF then return false end
+  return abs(b - a) <= 1e-3 * math.max(abs(a), abs(b), 1e-9)
+end
+
+local function chg(a, b)
+  if type(a) ~= "number" or type(b) ~= "number" then return "" end
+  if a == INF or b == INF or a == -INF or b == -INF then return "" end
+  if rel(a, b) then return "  (igual)" end
+  if abs(a) > 1e-12 then
+    local pct = (b - a) / abs(a) * 100
+    return string.format("  (%s%.3g%%)", pct > 0 and "+" or "", pct)
+  end
+  return ""
+end
+
+local function vtxt(m)
+  if type(m.val) ~= "number" then return tostring(m.val) end
+  if m.key == "estable" then return (m.val == 1) and "estable" or "INESTABLE" end
+  return fmt(m.val, 4) .. ((m.unit ~= "") and (" " .. m.unit) or "")
+end
+
+-- razonamiento por resultado
+local function reason(key, a, b, MA, MB)
+  local up = b > a
+  local function g(k, M) return M[k] and M[k].val end
+  local zA, zB = g("zeta", MA), g("zeta", MB)
+  local sA, sB = g("sigma", MA), g("sigma", MB)
+  local wdA, wdB = g("wd", MA), g("wd", MB)
+  if key == "ts2" or key == "ts5" or key == "tsreal" then
+    if sA and sB and rel(sA, sB) then return "ts no cambia: depende solo de " .. U.sigma .. " = " .. U.zeta .. U.wn .. " (parte real de los polos dominantes), que se mantuvo en " .. fmt(sA, 4) .. "." end
+    if sA and sB then return "ts " .. (up and "aumenta" or "disminuye") .. " porque " .. U.sigma .. " = " .. U.zeta .. U.wn .. " pasa de " .. fmt(sA, 4) .. " a " .. fmt(sB, 4) .. ": los polos dominantes se " .. (up and "acercan al" or "alejan del") .. " eje j" .. U.w .. " (respuesta mas " .. (up and "lenta" or "rapida") .. ")." end
+    return "El tiempo de asentamiento " .. (up and "aumenta: respuesta mas lenta." or "disminuye: respuesta mas rapida.")
+  elseif key == "Mp" or key == "Mpreal" then
+    if zA and zB and not rel(zA, zB) then return "Mp " .. (up and "aumenta" or "disminuye") .. " porque " .. U.zeta .. " pasa de " .. fmt(zA, 4) .. " a " .. fmt(zB, 4) .. " (" .. ((zB < zA) and "menos amortiguamiento: mas oscilacion" or "mas amortiguamiento: menos oscilacion") .. ")." end
+    return "El sobrepaso " .. (up and "aumenta: respuesta mas oscilatoria." or "disminuye: respuesta mas amortiguada.")
+  elseif key == "tp" or key == "tr" then
+    if wdA and wdB then return key .. " " .. (up and "aumenta" or "disminuye") .. " porque depende de 1/" .. U.w .. "d y " .. U.w .. "d pasa de " .. fmt(wdA, 4) .. " a " .. fmt(wdB, 4) .. " rad/s." end
+  elseif key == "wn" then
+    return U.wn .. " (distancia de los polos al origen) " .. (up and "aumenta" or "disminuye") .. "."
+  elseif key == "zeta" then
+    return U.zeta .. " = cos(angulo del polo): " .. (up and "aumenta (polos mas cerca del eje real, menos oscilacion)." or "disminuye (polos mas cerca del eje j" .. U.w .. ", mas oscilacion).")
+  elseif key == "wd" then
+    return U.w .. "d (parte imaginaria de los polos) " .. (up and "aumenta: oscila mas rapido." or "disminuye: oscila mas lento.")
+  elseif key == "ep" or key == "ev" or key == "ea" or key == "ess" then
+    if a == 0 and b == 0 then return "El error sigue siendo nulo (el tipo del sistema lo anula)." end
+    if b == INF then return "El error pasa a ser infinito (el tipo no alcanza para esa senal)." end
+    local cst = ({ep = "Kp", ev = "Kv", ea = "Ka"})[key]
+    local cA, cB = cst and g(cst, MA), cst and g(cst, MB)
+    if cA and cB then return "El error " .. (up and "aumenta" or "disminuye") .. " porque " .. cst .. " pasa de " .. fmt(cA, 4) .. " a " .. fmt(cB, 4) .. " (" .. key .. " es inversamente proporcional a " .. cst .. ")." end
+    return "El error en estado estable " .. (up and "aumenta: menor precision." or "disminuye: mayor precision.")
+  elseif key == "MF" then
+    return "MF " .. (up and "aumenta: mayor estabilidad relativa (menos sobrepaso)." or "disminuye: menor estabilidad relativa (mas oscilacion y sobrepaso)" .. ((b <= 0) and "; con MF " .. U.le .. " 0 el lazo es INESTABLE." or "."))
+  elseif key == "MG" or key == "MGdB" then
+    return "MG " .. (up and "aumenta: se puede subir mas la ganancia antes de inestabilizar." or "disminuye: el lazo queda mas cerca de la inestabilidad" .. ((key == "MG" and b <= 1) and "; con MG " .. U.le .. " 1 es INESTABLE." or "."))
+  elseif key == "wcg" then
+    return U.w .. "cg " .. (up and "aumenta: mayor ancho de banda, respuesta mas rapida." or "disminuye: respuesta mas lenta.")
+  elseif key == "estable" then
+    return (b == 1) and "El sistema pasa a ser ESTABLE." or "El sistema pasa a ser INESTABLE."
+  elseif key == "ratio" then
+    return "La separacion entre polos " .. (up and "aumenta" or "disminuye") .. ": la aproximacion de 2o orden es " .. ((b >= 5) and "valida (" .. U.ge .. " 5)." or "menos valida (< 5).")
+  elseif key == "kmax" then
+    return "El limite de estabilidad cambia: ahora se admite hasta k = " .. fmt(b, 5) .. "."
+  elseif key == "znKp" then
+    return "ZN: Kp = 0.9" .. U.tau .. "/(KL) es inversamente proporcional a K y a L: pasa de " .. fmt(a, 4) .. " a " .. fmt(b, 4) .. "."
+  elseif key == "znTi" then
+    return "ZN: Ti = 3.33L es proporcional al retardo: pasa de " .. fmt(a, 4) .. " a " .. fmt(b, 4) .. " s."
+  elseif key == "hKp" then
+    return "HHC: Kp = " .. U.w .. "p" .. U.tau .. "/(MG K) con " .. U.w .. "p inversamente proporcional a td: Kp pasa de " .. fmt(a, 4) .. " a " .. fmt(b, 4) .. "."
+  elseif key == "hTi" then
+    return "HHC: Ti cambia de " .. fmt(a, 4) .. " a " .. fmt(b, 4) .. " s."
+  elseif key == "Ku" then
+    return "La ganancia ultima Ku " .. (up and "aumenta: el proceso tolera mas ganancia." or "disminuye: con mas retardo/ganancia el lazo se inestabiliza antes.")
+  elseif key == "tau" or key == "L" or key == "K" then
+    return key .. " del modelo cambia de " .. fmt(a, 4) .. " a " .. fmt(b, 4) .. "."
+  elseif key == "Kc" then
+    return "La ganancia del controlador " .. (up and "aumenta: polos deseados mas exigentes (mas lejos) requieren mas ganancia." or "disminuye.")
+  elseif key == "phi" then
+    return "La deficiencia angular " .. (up and "aumenta: el controlador debe aportar mas fase." or "disminuye: se necesita menos fase.")
+  end
+  return nil
+end
+
+function compare_results(mod, VA, VB, MA, MB)
+  local out = {}
+  local m = MODULES[mod]
+  out[#out + 1] = "== COMPARACION  A " .. U.arrow .. " B =="
+  -- datos cambiados
+  local changed = {}
+  for _, f in ipairs(m.fields) do
+    local a, b = VA[f[1]] or "", VB[f[1]] or ""
+    if a ~= b then
+      local txt = f[2] .. ": " .. ((a == "") and "(vacio)" or a) .. "  " .. U.arrow .. "  " .. ((b == "") and "(vacio)" or b)
+      local na, nb = tonumber(a), tonumber(b)
+      if na and nb and na ~= 0 then txt = txt .. "  (x" .. fmt(nb / na, 4) .. ")" end
+      changed[#changed + 1] = txt
+    end
+  end
+  out[#out + 1] = "Datos modificados:"
+  if #changed == 0 then out[#out + 1] = "  (ninguno)" end
+  for _, c in ipairs(changed) do out[#out + 1] = "  " .. c end
+  -- resultados
+  local MAk, MBk = {}, {}
+  for _, x in ipairs(MA or {}) do MAk[x.key] = x end
+  for _, x in ipairs(MB or {}) do MBk[x.key] = x end
+  out[#out + 1] = "Resultados (A " .. U.arrow .. " B):"
+  local reasons = {}
+  for _, x in ipairs(MB or {}) do
+    local a = MAk[x.key]
+    if a then
+      out[#out + 1] = "  " .. x.label .. ": " .. vtxt(a) .. "  " .. U.arrow .. "  " .. vtxt(x) .. chg(a.val, x.val)
+      if type(a.val) == "number" and type(x.val) == "number" and not rel(a.val, x.val) then
+        local r = reason(x.key, a.val, x.val, MAk, MBk)
+        if r then reasons[#reasons + 1] = r end
+      elseif type(a.val) == "number" and type(x.val) == "number" and (x.key == "ts2") then
+        local r = reason(x.key, a.val, x.val, MAk, MBk)
+        if r then reasons[#reasons + 1] = r end
+      end
+    else
+      out[#out + 1] = "  " .. x.label .. ": (nuevo) " .. vtxt(x)
+    end
+  end
+  if #reasons > 0 then
+    out[#out + 1] = "== Razonamiento =="
+    for _, r in ipairs(reasons) do out[#out + 1] = r end
+  end
+  -- conclusion
+  local con = {}
+  local function d(k) local a, b = MAk[k], MBk[k]; if a and b and type(a.val) == "number" and type(b.val) == "number" and not rel(a.val, b.val) then return b.val - a.val end end
+  local dts = d("ts2") or d("tsreal")
+  if dts then con[#con + 1] = (dts < 0) and "mas rapido" or "mas lento"
+  elseif MAk["ts2"] and MBk["ts2"] then con[#con + 1] = "con el mismo tiempo de asentamiento" end
+  local dmp = d("Mp") or d("Mpreal")
+  if dmp then con[#con + 1] = (dmp > 0) and "mas oscilatorio (mayor Mp)" or "menos oscilatorio (menor Mp)" end
+  local dmf = d("MF")
+  if dmf then con[#con + 1] = (dmf < 0) and "menos estable relativamente (menor MF)" or "mas estable relativamente (mayor MF)" end
+  local der = d("ev") or d("ep") or d("ess")
+  if der then con[#con + 1] = (der < 0) and "mas preciso (menor error)" or "menos preciso (mayor error)" end
+  local dst = d("estable")
+  if dst then con[#con + 1] = (dst > 0) and "pasa a ser ESTABLE" or "pasa a ser INESTABLE" end
+  local dwc = d("wcg")
+  if dwc and not dts then con[#con + 1] = (dwc > 0) and "mas rapido (mayor " .. U.w .. "cg)" or "mas lento (menor " .. U.w .. "cg)" end
+  if #con > 0 then
+    out[#out + 1] = "== Conclusion =="
+    out[#out + 1] = "Con el cambio" .. ((#changed > 0) and (" (" .. changed[1]:gsub("%s+", " ") .. ")") or "") .. ", el sistema resulta " .. table.concat(con, ", ") .. "."
+  end
+  out[#out + 1] = "== Resultado B completo =="
+  return out
+end
 
 --------------------------------------------------------------------------
 -- definicion de modulos para la interfaz

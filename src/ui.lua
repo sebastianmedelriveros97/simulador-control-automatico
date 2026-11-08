@@ -14,6 +14,8 @@ local rerror = false
 local rviews = nil         -- graficos del resultado (tab los recorre)
 local vidx = 1
 local rchain = nil         -- envio de datos a otros modulos (teclas)
+local rmet = nil           -- resultados clave del ultimo calculo
+local cmpbase = nil        -- caso A para comparar {mod, vals, met}
 local lscroll = 0          -- desplazamiento de la leyenda del grafico
 local VALS = {}            -- VALS[i][key] = texto
 
@@ -68,6 +70,7 @@ local function getval() local f = curfield(); return f and VALS[cur][f[1]] or ""
 local function setval(s) local f = curfield(); if f then VALS[cur][f[1]] = s end end
 
 local function openmodule(i)
+  if cmpbase and cmpbase.mod ~= i then cmpbase = nil end
   cur = i
   local m = MODULES[i]
   if m.help then
@@ -86,6 +89,17 @@ local function compute()
   local ok, res = pcall(m.run, VALS[cur])
   if ok then
     rlines = res; rerror = false; rviews = res.views; rchain = res.chain; vidx = 1; lscroll = 0
+    rmet = res.met
+    if cmpbase and cmpbase.mod == cur and res.met then
+      local okc, cl = pcall(compare_results, cur, cmpbase.vals, VALS[cur], cmpbase.met, res.met)
+      if okc then
+        local merged = {}
+        for _, l in ipairs(cl) do merged[#merged + 1] = l end
+        for _, l in ipairs(res) do merged[#merged + 1] = l end
+        merged.views = res.views; merged.chain = res.chain; merged.met = res.met
+        rlines = merged
+      end
+    end
     if rviews and #rviews == 0 then rviews = nil end
   else
     local msg = tostring(res):gsub("^.-:%d+: ", "")
@@ -140,7 +154,7 @@ end
 local HOME = {y0 = 19, rh = 18, vis = 9, scroll = 0}
 
 local function paint_home(gc)
-  titlebar(gc, "Control Automatico", "v9 - APN")
+  titlebar(gc, "Control Automatico", "v10 - APN")
   -- alturas reales de las fuentes (evita superposiciones)
   gc:setFont("sansserif", "b", 10)
   local th = gc:getStringHeight("Ay")
@@ -193,7 +207,7 @@ end
 
 local function paint_form(gc)
   local m = MODULES[cur]
-  titlebar(gc, cur .. ". " .. m.title, "enter: calcular")
+  titlebar(gc, cur .. ". " .. m.title, (cmpbase and cmpbase.mod == cur) and "enter: comparar con A" or "enter: calcular")
   local top, hintH, vis = formlayout()
   local fields = m.fields
   if fsel > fscroll + vis then fscroll = fsel - vis end
@@ -754,6 +768,15 @@ function on.charIn(ch)
     if d and d >= 1 and d <= #MODULES then hsel = d; openmodule(d) end
     return
   end
+  -- en resultados: tecla c = guardar como caso A y volver a editar
+  if screen == "result" and (ch == "c" or ch == "C") and rmet and not rerror then
+    local copy = {}
+    for k_, v_ in pairs(VALS[cur]) do copy[k_] = v_ end
+    cmpbase = {mod = cur, vals = copy, met = rmet}
+    screen = "form"; cpos = #getval()
+    inval()
+    return
+  end
   -- en resultados: tecla numerica = enviar datos a otro modulo
   if screen == "result" and rchain and rchain[ch] then
     local c = rchain[ch]
@@ -860,6 +883,7 @@ if toolpalette then
       {"Vaciar campo (clear)", function() if screen == "form" then setval(""); cpos = 0; inval() end end},
       {"Reiniciar modulo actual", clearall},
       {"Volver al inicio", function() screen = "home"; inval() end},
+      {"Quitar comparacion (caso A)", function() cmpbase = nil; inval() end},
     },
   })
 end

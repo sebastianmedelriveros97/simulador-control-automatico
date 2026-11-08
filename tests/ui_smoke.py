@@ -71,5 +71,15 @@ g.on.enterKey(); o5 = paint(); assert any("Routh" in x for x in o5), o5[:3]
 g.on.charIn("3"); o3 = paint(); assert o3[0].startswith("3."), o3[:3]
 assert any("4k" in x or "10k" in x for x in o3), o3[:12]
 print("tecla 3 desde modulo 5 OK")
+# comparar: modulo 3 con K=5, tecla c, K=10
+g.on.enterKey() if False else None
+g.on.escapeKey(); g.on.escapeKey(); g.on.escapeKey()
+g.on.charIn("3")
+g.on.clearKey(); typ("5"); g.on.arrowDown(); g.on.clearKey(); typ("4/(s(s+4))"); g.on.arrowUp()
+g.on.enterKey(); paint()
+g.on.charIn("c"); f = paint(); assert any("comparar con A" in x for x in f), f[:3]
+g.on.clearKey(); typ("10"); g.on.enterKey(); r = paint()
+assert any("COMPARACION" in x for x in r), r[:6]
+print("comparacion OK:", [x for x in r[:12]])
 print("menu:", len(list(g.MENU.values())))
 print("OK UI")

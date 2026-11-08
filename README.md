@@ -97,6 +97,20 @@ Módulo 8 → `K = 2`, `τ = 9`, `L = 1.5`, `MG = 3`, `MF = 60`, `factor Kp = 2`
 - **Teclas numéricas en el resultado**: envían el controlador o el modelo a otro módulo sin reescribirlo. Por ejemplo, en el módulo 7, `3` lleva a la respuesta LC y `6` a márgenes/Bode; en el módulo 9, `8` lleva a Sintonía.
 - **Entrenamiento (10)**: elija el `tipo` y el `nro` del ejercicio, presione enter para ver el enunciado, resuelva a mano, escriba r1..r3 y presione enter para corregir. Con `?` en r1 se muestra la solución.
 
+### Comparar dos casos (tecla `c`, todos los módulos)
+
+Sirve para preguntas como "repita con K = 10 y compare" o "¿qué pasa si se duplica…?":
+
+1. Calcule el caso original y, en el resultado, presione **`c`**. El resultado queda guardado como **caso A** y se abren los datos.
+2. Modifique lo que pide la pregunta y presione **enter**.
+3. Arriba del resultado aparece **COMPARACIÓN A → B** con:
+   - los datos modificados (con el factor, por ejemplo ×2);
+   - cada resultado clave en ambos casos y su variación en %;
+   - un **razonamiento** de por qué cambió cada uno (por ejemplo: "ts no cambia: depende solo de σ = ζωn, que se mantuvo en 2"; "Mp aumenta porque ζ pasa de 0,447 a 0,316");
+   - una **conclusión** (más rápido o más lento, más o menos oscilatorio, más o menos estable, más o menos preciso).
+
+Puede seguir modificando y comparando contra el mismo caso A. Si presiona `c` otra vez, el resultado actual pasa a ser el nuevo caso A. Para quitar la comparación: menu → Editar → Quitar comparación.
+
 ### Gráfico del plano s (módulo 7)
 
 Después de calcular un diseño por localización de polos, presione **`tab`** para ver el plano s:
