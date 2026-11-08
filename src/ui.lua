@@ -154,7 +154,7 @@ end
 local HOME = {y0 = 19, rh = 18, vis = 9, scroll = 0}
 
 local function paint_home(gc)
-  titlebar(gc, "Control Automatico", "v10 - APN")
+  titlebar(gc, "Control Automatico", "v11 - APN")
   -- alturas reales de las fuentes (evita superposiciones)
   gc:setFont("sansserif", "b", 10)
   local th = gc:getStringHeight("Ay")
@@ -675,12 +675,65 @@ local function paint_rlocus(gc, V)
   gc:drawString("j" .. U.w, X(0) + 3, top, "top")
 end
 
+-- mapa de polos con dominancia -------------------------------------------
+local function paint_poles(gc, V)
+  vtitle(gc, "Polos LC y dominancia")
+  local leg = {}
+  for _, l in ipairs(V.legend or {}) do leg[#leg + 1] = {l[1], l[2] and GCOL[l[2]] or C.black} end
+  local ly = legendbox(gc, leg, 3)
+  local top, bot, left, right = 19, ly - 2, 4, W() - 4
+  local xmin, xmax, ymax = 0, 0, 0
+  for _, p in ipairs(V.poles) do xmin = math.min(xmin, p[1]); xmax = math.max(xmax, p[1]); ymax = math.max(ymax, math.abs(p[2])) end
+  for _, p in ipairs(V.zeros) do xmin = math.min(xmin, p[1]); xmax = math.max(xmax, p[1]); ymax = math.max(ymax, math.abs(p[2])) end
+  local five = 5 * V.dom[1]
+  if V.dom[1] < 0 then xmin = math.min(xmin, five) end
+  local R = math.max(xmax - xmin, 2 * ymax, 1e-3)
+  xmin, xmax = xmin - 0.08 * R, xmax + 0.12 * R
+  ymax = math.max(ymax, 0.15 * R) * 1.2
+  local sc = math.min((right - left) / (xmax - xmin), (bot - top) / (2 * ymax))
+  local cxw = (right - left) - sc * (xmax - xmin)
+  local cyh = (bot - top) - sc * 2 * ymax
+  local function X(x) return left + cxw / 2 + (x - xmin) * sc end
+  local function Y(y) return top + cyh / 2 + (ymax - y) * sc end
+  col(gc, C.box)
+  gc:drawLine(left, Y(0), right, Y(0))
+  gc:drawLine(X(0), top, X(0), bot)
+  if V.dom[1] < 0 then
+    col(gc, GCOL.cz); dashed(gc, true)
+    gc:drawLine(X(five), top, X(five), bot)
+    dashed(gc, false)
+    gc:setFont("sansserif", "r", 7)
+    gc:drawString("5" .. "\194\183" .. "Re dom", X(five) + 2, top + 1, "top")
+    col(gc, GCOL.pd); dashed(gc, true)
+    gc:drawLine(X(V.dom[1]), top, X(V.dom[1]), bot)
+    dashed(gc, false)
+    gc:drawString("Re dom", X(V.dom[1]) + 2, bot - 12, "top")
+  end
+  for _, p in ipairs(V.zeros) do marker(gc, "pz", X(p[1]), Y(p[2])) end
+  for i, p in ipairs(V.poles) do
+    local isdom = (i <= V.nd)
+    if isdom then
+      col(gc, GCOL.pd)
+      gc:fillArc(X(p[1]) - 4, Y(p[2]) - 4, 8, 8, 0, 360)
+    else
+      marker(gc, "pp", X(p[1]), Y(p[2]))
+    end
+    gc:setFont("sansserif", "r", 7)
+    col(gc, isdom and GCOL.pd or GCOL.pp)
+    if p[2] >= 0 then gc:drawString(fmtc(p[1], p[2], 3), math.min(X(p[1]) + 5, right - 60), Y(p[2]) - 12, "top") end
+  end
+  col(gc, C.grey); gc:setFont("sansserif", "r", 7)
+  gc:drawString(U.sigma, right - 8, Y(0) - 11, "top")
+  gc:drawString("j" .. U.w, X(0) + 3, top, "top")
+end
+
 local function paint_graph(gc)
   local V = rviews[vidx]
   if V.kind == "splane" then paint_splane(gc, V)
   elseif V.kind == "time" then paint_time(gc, V)
   elseif V.kind == "bode" then paint_bode(gc, V)
-  elseif V.kind == "rlocus" then paint_rlocus(gc, V) end
+  elseif V.kind == "rlocus" then paint_rlocus(gc, V)
+  elseif V.kind == "poles" then paint_poles(gc, V) end
 end
 
 function on.paint(gc)

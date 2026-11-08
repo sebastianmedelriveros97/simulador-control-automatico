@@ -188,6 +188,22 @@ local function dyn_report(L, T, poles, zeros)
   else
     local nxt = poles[nd + 1]
     local ratio = abs(nxt[1]) / abs(dom[1])
+    -- justificacion: cual polo domina y por que
+    add(L, "-- Eleccion del polo dominante --")
+    add(L, "Cada polo p aporta un modo e^(Re(p)" .. "\194\183" .. "t): mientras menor es |Re(p)|, mas lento decae.")
+    add(L, "Tabla (ordenada por cercania al eje j" .. W .. "):")
+    local seen = {}
+    for _, q in ipairs(poles) do
+      local key = fmt(q[1], 6) .. "," .. fmt(abs(q[2]), 6)
+      if not seen[key] then
+        seen[key] = true
+        local name = (q[2] ~= 0) and (fmt(q[1], 4) .. " " .. PM .. " j" .. fmt(abs(q[2]), 4)) or fmt(q[1], 4)
+        add(L, "  " .. name .. ":  |Re| = " .. fmt(abs(q[1]), 4) .. ",  " .. TAU .. " = 1/|Re| = " .. fmt(1 / abs(q[1]), 4) .. " s,  se extingue en " .. U.approx .. "4" .. TAU .. " = " .. fmt(4 / abs(q[1]), 4) .. " s")
+      end
+    end
+    add(L, "El dominante es el de MENOR |Re| (mas cercano al eje j" .. W .. "): su modo")
+    add(L, "es el ultimo en extinguirse, por eso gobierna la respuesta (ts, Mp).")
+    add(L, "Los demas desaparecen antes; se desprecian si |Re| " .. U.ge .. " 5" .. "\194\183" .. "|Re dom|.")
     add(L, "Polo dominante: " .. fmtc(dom[1], abs(dom[2])) .. (nd == 2 and (" (par " .. PM .. ")") or ""))
     add(L, "Separacion: |Re sig.|/|Re dom.| = " .. fmt(abs(nxt[1])) .. "/" .. fmt(abs(dom[1])) .. " = " .. fmt(ratio, 4))
     if np == 2 and nd == 1 and ratio < 5 then
@@ -413,6 +429,19 @@ local function m_polos(v)
   dyn_report(L, T, poles, zeros)
   do
     local V, m, st = timeview(T, A, (lazo == 1) and "Respuesta LC al escalon" or "Respuesta al escalon", "y(t), A = " .. fmt(A))
+    if #poles >= 1 then
+      local dom = poles[1]
+      local nd = (dom[2] ~= 0) and 2 or 1
+      local PV = {kind = "poles", poles = poles, zeros = zeros, dom = dom, nd = nd, legend = {}}
+      if isstable(poles) then
+        PV.legend[#PV.legend + 1] = {"azul: dominante(s) " .. fmtc(dom[1], abs(dom[2]), 4) .. ((nd == 2) and " (par)" or "") .. ", |Re| = " .. fmt(abs(dom[1]), 4), "pd"}
+        PV.legend[#PV.legend + 1] = {"linea verde: Re = 5" .. "\194\183" .. "Re dom = " .. fmt(5 * dom[1], 4) .. " (a la izq. se desprecian)", "cz"}
+        if poles[nd + 1] then PV.legend[#PV.legend + 1] = {"siguiente polo: |Re| = " .. fmt(abs(poles[nd + 1][1]), 4) .. "  " .. U.arrow .. " relacion " .. fmt(abs(poles[nd + 1][1]) / abs(dom[1]), 3), "txt"} end
+      else
+        PV.legend[#PV.legend + 1] = {"hay polos en el SPD o en el eje j" .. W .. ": sistema no estable", "pp"}
+      end
+      view(L, PV)
+    end
     view(L, V)
     local S = {((lazo == 1) and "GLC = " or "G = ") .. rstr(T), "Polos: " .. rootsstr(poles, 4), (stabilitytext(poles))}
     if st and m.yss then
@@ -432,6 +461,12 @@ local function m_polos(v)
         if #poles > nd then
           local ratio = abs(poles[nd + 1][1]) / abs(dom[1])
           metric(L, "ratio", "separacion de polos", ratio)
+          do
+            local nm = (nd == 2) and (fmt(dom[1], 4) .. " " .. PM .. " j" .. fmt(abs(dom[2]), 4)) or fmt(dom[1], 4)
+            local nn = poles[nd + 1]
+            local nn_s = (nn[2] ~= 0) and (fmt(nn[1], 4) .. " " .. PM .. " j" .. fmt(abs(nn[2]), 4)) or fmt(nn[1], 4)
+            say(L, "Se elige como dominante " .. ((nd == 2) and "el par " or "el polo ") .. nm .. " porque es el mas cercano al eje imaginario (|Re| = " .. fmt(abs(dom[1]), 4) .. "): su modo e^(" .. ((abs(dom[1] + 1) < 1e-12) and "-" or fmt(dom[1], 4)) .. "t) decae mas lento (" .. TAU .. " = " .. fmt(1 / abs(dom[1]), 4) .. " s) que el del polo " .. nn_s .. " (" .. TAU .. " = " .. fmt(1 / abs(nn[1]), 4) .. " s), que se extingue " .. fmt(ratio, 3) .. " veces mas rapido; por eso es el que gobierna la respuesta.")
+          end
           if ratio >= 5 then
             say(L, ((nd == 2) and ("Los polos dominantes son " .. fmt(dom[1], 4) .. " " .. PM .. " j" .. fmt(abs(dom[2]), 4)) or ("El polo dominante es " .. fmt(dom[1], 4))) .. ", ya que el siguiente polo esta " .. fmt(ratio, 3) .. " veces mas lejos del eje imaginario (" .. U.ge .. " 5); por ello es razonable aproximar por un modelo de orden " .. nd .. " que conserva la ganancia estatica.")
             local dpp = {dom}
