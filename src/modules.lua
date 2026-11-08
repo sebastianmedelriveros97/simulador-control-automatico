@@ -45,6 +45,24 @@ local function view(L, v) L.views = L.views or {}; L.views[#L.views + 1] = v end
 -- recuadro de respuestas al inicio del resultado
 local function say(L, txt) L.say = L.say or {}; L.say[#L.say + 1] = txt end
 
+-- frases individuales de especificaciones de 2o orden
+local function sayspecs(L, z, wn)
+  local Zs, WNs, S_ = U.zeta, U.wn, U.sigma
+  local sg = z * wn
+  say(L, "El coeficiente de amortiguamiento es " .. Zs .. " = " .. fmt(z, 4) .. " y la frecuencia natural es " .. WNs .. " = " .. fmt(wn, 4) .. " rad/s.")
+  say(L, "El tiempo de asentamiento al 2% es ts(2%) = 4/(" .. Zs .. WNs .. ") = 4/" .. fmt(sg, 4) .. " = " .. fmt(4 / sg, 4) .. " s.")
+  say(L, "El tiempo de asentamiento al 5% es ts(5%) = 3/(" .. Zs .. WNs .. ") = 3/" .. fmt(sg, 4) .. " = " .. fmt(3 / sg, 4) .. " s.")
+  if z < 1 then
+    local wd = wn * sqrt(1 - z * z)
+    say(L, "La frecuencia natural amortiguada es " .. U.w .. "d = " .. WNs .. U.sqrt .. "(1-" .. Zs .. U.sq .. ") = " .. fmt(wd, 4) .. " rad/s.")
+    say(L, "El tiempo de subida es tr = (" .. U.pi .. " - acos " .. Zs .. ")/" .. U.w .. "d = (" .. U.pi .. " - " .. fmt(math.acos(z), 4) .. ")/" .. fmt(wd, 4) .. " = " .. fmt((pi - math.acos(z)) / wd, 4) .. " s.")
+    say(L, "El tiempo de peak es tp = " .. U.pi .. "/" .. U.w .. "d = " .. U.pi .. "/" .. fmt(wd, 4) .. " = " .. fmt(pi / wd, 4) .. " s.")
+    say(L, "El sobrepaso maximo es Mp = 100" .. "\194\183" .. "e^(-" .. Zs .. U.pi .. "/" .. U.sqrt .. "(1-" .. Zs .. U.sq .. ")) = " .. fmt(Mp_from_zeta(z), 4) .. " %.")
+  else
+    say(L, "Como " .. Zs .. " " .. U.ge .. " 1 la respuesta es sobreamortiguada: no hay sobrepaso (Mp = 0 %) ni tiempo de peak.")
+  end
+end
+
 local function summary(L, items)
   local out = {"== RESPUESTAS =="}
   for _, it in ipairs(items) do out[#out + 1] = it end
@@ -242,10 +260,9 @@ local function m_specs(v)
     end
     local V = timeview(rat({wn * wn}, {wn * wn, 2 * sig, 1}), 1, "2o orden estandar", "y(t) escalon unitario")
     view(L, V)
-    say(L, "El coeficiente de amortiguamiento es " .. Z .. " = " .. fmt(z, 4) .. " y la frecuencia natural es " .. WN .. " = " .. fmt(wn, 4) .. " rad/s.")
+    sayspecs(L, z, wn)
     if z < 1 and wd then
       say(L, "Los polos deseados de lazo cerrado son s = -" .. fmt(sig, 4) .. " " .. PM .. " j" .. fmt(wd, 4) .. ", es decir, el polinomio deseado es s" .. U.sq .. " + " .. fmt(2 * sig, 4) .. "s + " .. fmt(wn * wn, 4) .. ".")
-      say(L, "Con estos valores: ts(2%) = " .. fmt(4 / sig, 4) .. " s, Mp = " .. fmt(Mp_from_zeta(z), 4) .. " %, tp = " .. fmt(pi / wd, 4) .. " s y tr = " .. fmt((pi - math.acos(z)) / wd, 4) .. " s.")
     end
   else
     say(L, "El coeficiente de amortiguamiento es " .. Z .. " = " .. fmt(z, 4) .. ".")
@@ -404,9 +421,16 @@ local function m_polos(v)
           local sg, w = -dom[1], abs(dom[2])
           local wnn = sqrt(sg * sg + w * w)
           local zz = sg / wnn
-          say(L, "Con " .. Z .. " = " .. fmt(zz, 4) .. " y " .. WN .. " = " .. fmt(wnn, 4) .. " rad/s se obtiene: ts(2%) = " .. fmt(4 / sg, 4) .. " s, ts(5%) = " .. fmt(3 / sg, 4) .. " s, tr = " .. fmt((pi - math.acos(zz)) / w, 4) .. " s, tp = " .. fmt(pi / w, 4) .. " s y Mp = " .. fmt(Mp_from_zeta(zz), 4) .. " %.")
+          say(L, "Con los polos dominantes (" .. ((#poles > 2) and "modelo reducido" or "segundo orden") .. "):")
+          sayspecs(L, zz, wnn)
         else
-          say(L, "Con el polo dominante en " .. fmt(dom[1], 4) .. ": " .. TAU .. " = " .. fmt(1 / abs(dom[1]), 4) .. " s, ts(2%) = " .. fmt(4 / abs(dom[1]), 4) .. " s, sin sobrepaso (Mp = 0 %).")
+          local tau1 = 1 / abs(dom[1])
+          say(L, "La constante de tiempo dominante es " .. TAU .. " = 1/" .. fmt(abs(dom[1]), 4) .. " = " .. fmt(tau1, 4) .. " s.")
+          say(L, "El tiempo de asentamiento al 2% es ts(2%) = 4" .. TAU .. " = " .. fmt(4 * tau1, 4) .. " s, y al 5% es ts(5%) = 3" .. TAU .. " = " .. fmt(3 * tau1, 4) .. " s.")
+          say(L, "Como el polo dominante es real, no hay sobrepaso: Mp = 0 %.")
+        end
+        if m.Mp and #poles > 2 then
+          say(L, "(Comprobacion con la respuesta exacta del sistema completo: " .. metricstext(m) .. ".)")
         end
         if m.yss then say(L, "El valor final ante el escalon es y(" .. U.inf .. ") = " .. fmt(m.yss) .. ".") end
       end
@@ -556,7 +580,10 @@ local function m_resp(v)
       if fast and slow then
         say(L, "Todos los modos decaen, por lo que el sistema es estable. El modo mas veloz es el asociado al polo " .. fmtc(fast[1], fast[2], 4) .. " (mayor |Re|, se extingue en " .. U.approx .. " " .. fmt(4 / abs(fast[1]), 4) .. " s); el modo dominante es el del polo " .. fmtc(slow[1], slow[2], 4) .. ", que fija el tiempo de asentamiento ts " .. U.approx .. " " .. fmt(4 / abs(slow[1]), 4) .. " s.")
       end
-      if yss then say(L, "El valor final es y(" .. U.inf .. ") = " .. fmt(yss) .. ".") end
+      if yss then
+        say(L, "El valor final es y(" .. U.inf .. ") = " .. fmt(yss) .. ".")
+        if m.Mp then say(L, "Medido sobre y(t): el sobrepaso maximo es Mp = " .. fmt(m.Mp, 4) .. " %" .. (m.tp and (", el tiempo de peak es tp = " .. fmt(m.tp, 4) .. " s") or "") .. (m.tr and (", el tiempo de subida es tr = " .. fmt(m.tr, 4) .. " s") or "") .. (m.ts2 and (" y el tiempo de asentamiento es ts(2%) = " .. fmt(m.ts2, 4) .. " s") or "") .. ".") end
+      end
     end
     if diverge then S[#S + 1] = "INESTABLE: y(t) no alcanza estado estable"
     else
@@ -1580,13 +1607,23 @@ local function m_place(v)
     if st and m.yss then S[#S + 1] = "Simulacion: " .. metricstext(m) end
     S[#S + 1] = "tab: plano s y respuesta y(t)"
     L.res = {phi = phi, a = zc or 0, Kc = Kc}
-    say(L, "A partir de las especificaciones, los polos deseados de lazo cerrado son pd = -" .. fmt(sig, 4) .. " " .. PM .. " j" .. fmt(wd, 4) .. ".")
+    do
+      local wnn = sqrt(sig * sig + wd * wd)
+      local zz = sig / wnn
+      say(L, "De Mp y ts se obtiene " .. Z .. " = " .. fmt(zz, 4) .. " y " .. WN .. " = " .. fmt(wnn, 4) .. " rad/s; los polos deseados de lazo cerrado son pd = -" .. fmt(sig, 4) .. " " .. PM .. " j" .. fmt(wd, 4) .. ".")
+    end
     if useI then say(L, "Como se exige error nulo ante escalon y la planta es tipo 0, se agrega accion integral (polo en el origen).")
     else say(L, "Como no se exige seguimiento exacto en regimen permanente, no se requiere accion integral.") end
     say(L, "La condicion de angulo en pd entrega una deficiencia angular " .. PHI .. "d = " .. fmt(phi, 4) .. DEG .. "; por lo tanto, la estructura minima es un controlador " .. names[nz] .. ((nz == 1) and " (un cero aporta entre 0" .. DEG .. " y 90" .. DEG .. ")." or ((nz == 2) and " (se requieren dos ceros, " .. PHI .. "d/2 cada uno)." or ".")))
     if nz > 0 then say(L, "El cero del controlador se ubica en s = -" .. fmt(zc, 5) .. " y, por la condicion de magnitud, Kc = " .. fmt(Kc, 5) .. ".") end
     say(L, "El controlador obtenido es Gc(s) = " .. gcs .. ".")
     say(L, "Se verifica que los polos de lazo cerrado son " .. rootsstr(r, 4) .. ", que incluyen a pd; el sistema es " .. ((isstable(r)) and "estable." or "inestable."))
+    if st and m.yss then
+      if m.Mp then say(L, "Con el controlador, el sobrepaso maximo real es Mp = " .. fmt(m.Mp, 4) .. " %" .. (Mp and (" (pedido: " .. fmt(Mp) .. " %)") or "") .. ".") end
+      if m.tp then say(L, "El tiempo de peak real es tp = " .. fmt(m.tp, 4) .. " s.") end
+      if m.tr then say(L, "El tiempo de subida real es tr = " .. fmt(m.tr, 4) .. " s.") end
+      if m.ts2 then say(L, "El tiempo de asentamiento real es ts(2%) = " .. fmt(m.ts2, 4) .. " s" .. (ts and (" (pedido: " .. fmt(ts) .. " s)") or "") .. ".") end
+    end
     say(L, "El error en estado estable ante escalon unitario es ep = " .. fmt(e.ep, 4) .. ((e.ep == 0) and " (seguimiento exacto)." or (" (la salida se estabiliza en " .. fmt(1 - e.ep, 4) .. ").")))
     local gtxt = rexact(Gc)
     chain(L, "3", 3, {Gc = gtxt, Gp = v.Gp, lazo = "1", A = "1", k = ""}, "polos y respuesta LC con este Gc")
