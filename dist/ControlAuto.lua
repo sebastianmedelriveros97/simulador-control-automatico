@@ -3154,6 +3154,19 @@ local function pidtf_sim(Kp, Ti, Td)
   return radd(base, rat({0, Kp * Td}, {1, a}))
 end
 
+-- verificacion compacta de un controlador con la planta y retardo exactos
+local function verif_line(G0, Ld)
+  local mm = margins(freqobj(G0, Ld))
+  local r = {}
+  r.wcg = mm.gc[1] and mm.gc[1].w; r.MF = mm.gc[1] and mm.gc[1].MF or INF
+  r.wcf = mm.pc[1] and mm.pc[1].w; r.MG = mm.pc[1] and mm.pc[1].MG or INF
+  r.ok = (r.MF > 0 and r.MG > 1)
+  r.txt = U.w .. "cg=" .. (r.wcg and fmt(r.wcg, 4) or "-") .. "  MF=" .. fmt(r.MF, 4) .. U.deg ..
+    "  " .. U.w .. "cf=" .. (r.wcf and fmt(r.wcf, 4) or "-") .. "  MG=" .. fmt(r.MG, 4) ..
+    "  " .. U.arrow .. " " .. (r.ok and "ESTABLE" or "INESTABLE")
+  return r
+end
+
 local function pidtf(Kp, Ti, Td)
   -- Kp(1 + 1/(Ti s) + Td s)
   if not Ti then
@@ -3249,8 +3262,16 @@ local function m_empir(v)
   end
   -- verificacion con retardo exacto
   if haveModel then
-    sep(L, "Verificacion (retardo exacto)")
-    add(L, "Con G0 = Gc" .. "\194\183" .. "Gp y el retardo e^(-L" .. W .. "): a) MF en " .. W .. "cg, b) MG en " .. W .. "cf, c) estabilidad.")
+    sep(L, "VERIFICACION DE ESTABILIDAD (planta y retardo exactos)")
+    add(L, "Formulario: 'Para verificar estabilidad utilice la planta indicada y el")
+    add(L, "retardo exacto; las reglas empiricas proporcionan ajustes iniciales.'")
+    add(L, "G0(j" .. W .. ") = Gc(j" .. W .. ")" .. "\194\183" .. "Gp(j" .. W .. ") con e^(-j" .. W .. "L), L = " .. fmt(Ld) .. " s (sin aproximar)")
+    add(L, "Estable si MF > 0" .. DEG .. " y MG > 1. Resumen:")
+    for _, c in ipairs(verify) do
+      local r = verif_line(rmul(pidtf(c[2], c[3], c[4]), Gp), Ld)
+      add(L, "  " .. c[1] .. ": " .. r.txt)
+    end
+    add(L, "Detalle paso a paso: a) MF en " .. W .. "cg, b) MG en " .. W .. "cf, c) estabilidad.")
     marginlines(L, freqobj(Gp, Ld), "Planta sola (Gc = 1):", 1)
     local base
     for i, c in ipairs(verify) do
@@ -3317,14 +3338,32 @@ local function m_empir(v)
   end
   do
     local S = {}
-    if haveModel then S[#S + 1] = "ZN-LA PI: Kp = " .. fmt(0.9 * tau / (K * Ld)) .. ", Ti = " .. fmt(3.33 * Ld) .. " s" end
-    if Ku and Pu then S[#S + 1] = "ZN-LC PI: Kp = " .. fmt(0.45 * Ku) .. ", Ti = " .. fmt(Pu / 1.2) .. " s  (Ku=" .. fmt(Ku, 4) .. ", Pu=" .. fmt(Pu, 4) .. ")" end
+    local VR = {}
+    if haveModel then
+      S[#S + 1] = "ZN-LA PI: Kp = " .. fmt(0.9 * tau / (K * Ld)) .. ", Ti = " .. fmt(3.33 * Ld) .. " s"
+      VR.znla = verif_line(rmul(pidtf(0.9 * tau / (K * Ld), 3.33 * Ld), Gp), Ld)
+      S[#S + 1] = "  verif.: " .. VR.znla.txt
+    end
+    if Ku and Pu then
+      S[#S + 1] = "ZN-LC PI: Kp = " .. fmt(0.45 * Ku) .. ", Ti = " .. fmt(Pu / 1.2) .. " s  (Ku=" .. fmt(Ku, 4) .. ", Pu=" .. fmt(Pu, 4) .. ")"
+      if haveModel then
+        VR.znlc = verif_line(rmul(pidtf(0.45 * Ku, Pu / 1.2), Gp), Ld)
+        S[#S + 1] = "  verif.: " .. VR.znlc.txt
+      end
+    end
     if hhc then
       S[#S + 1] = "HHC: Kp = " .. fmt(hhc[2]) .. ", Ti = " .. fmt(hhc[3]) .. " s" .. (hhc[4] and (", Td = " .. fmt(hhc[4])) or "")
-      local G0 = rmul(pidtf(hhc[2], hhc[3], hhc[4]), Gp)
-      local mm = margins(freqobj(G0, Ld))
-      if mm.gc[1] then S[#S + 1] = "HHC verif.: " .. W .. "cg = " .. fmt(mm.gc[1].w, 4) .. ", MF = " .. fmt(mm.gc[1].MF, 4) .. DEG end
-      if mm.pc[1] then S[#S + 1] = "            " .. W .. "cf = " .. fmt(mm.pc[1].w, 4) .. ", MG = " .. fmt(mm.pc[1].MG, 4) end
+      VR.hhc = verif_line(rmul(pidtf(hhc[2], hhc[3], hhc[4]), Gp), Ld)
+      S[#S + 1] = "  verif.: " .. VR.hhc.txt
+    end
+    if haveModel then S[#S + 1] = "(verif. = margenes con la planta y el retardo exactos)" end
+    if haveModel then
+      local gpz = string.format("%.7g/(%.7g*s+1)", K, tau)
+      if tau2 then gpz = string.format("%.7g/((%.7g*s+1)*(%.7g*s+1))", K, tau, tau2) end
+      local kz, tz = 0.9 * tau / (K * Ld), 3.33 * Ld
+      chain(L, "z", 6, {Gc = string.format("%.7g*(1+1/(%.7g*s))", kz, tz), Gp = gpz, L = string.format("%.7g", Ld), k = ""}, "Bode / margenes del lazo ZN-PI (lazo abierto)")
+    end
+    if hhc then
       local gtxt = string.format("%.7g*(1+1/(%.7g*s))", hhc[2], hhc[3])
       if hhc[4] then gtxt = string.format("%.7g*(1+1/(%.7g*s)+%.7g*s)", hhc[2], hhc[3], hhc[4]) end
       local gp = string.format("%.7g/(%.7g*s+1)", K, tau)
@@ -3340,14 +3379,28 @@ local function m_empir(v)
       if mm0.gc[1] then metric(L, "wcg", U.w .. "cg (HHC)", mm0.gc[1].w, "rad/s"); metric(L, "MF", "MF (HHC)", mm0.gc[1].MF, DEG) end
       if mm0.pc[1] then metric(L, "MG", "MG (HHC)", mm0.pc[1].MG) end
     end
-    if haveModel then say(L, "Por Ziegler-Nichols (curva de reaccion), el controlador PI es Kp = 0.9" .. TAU .. "/(KL) = " .. fmt(0.9 * tau / (K * Ld), 4) .. " y Ti = 3.33L = " .. fmt(3.33 * Ld, 4) .. " s.") end
-    if Ku and Pu then say(L, "Por Ziegler-Nichols en lazo cerrado (Ku = " .. fmt(Ku, 4) .. ", Pu = " .. fmt(Pu, 4) .. " s), el controlador PI es Kp = 0.45Ku = " .. fmt(0.45 * Ku, 4) .. " y Ti = Pu/1.2 = " .. fmt(Pu / 1.2, 4) .. " s.") end
+    local function sayver(name, r)
+      if not r then return end
+      say(L, "Verificacion de " .. name .. " con la planta y el retardo exactos: " ..
+        (r.wcg and (W .. "cg = " .. fmt(r.wcg, 4) .. " rad/s, MF = " .. fmt(r.MF, 4) .. DEG) or "MF = " .. U.inf) .. "; " ..
+        (r.wcf and (W .. "cf = " .. fmt(r.wcf, 4) .. " rad/s, MG = " .. fmt(r.MG, 4) .. " (" .. fmt(db(r.MG), 4) .. " dB)") or "MG = " .. U.inf) .. ". " ..
+        (r.ok and ("Como MF > 0" .. DEG .. " y MG > 1, el lazo cerrado es ESTABLE" .. ((r.MF < 30 or r.MG < 2) and " pero con poca estabilidad relativa (se esperan oscilaciones y sobrepaso altos); al ser un ajuste inicial, convendria reducir Kp." or ".")) or "El lazo cerrado es INESTABLE: el ajuste empirico debe corregirse (reducir Kp)."))
+    end
+    if haveModel then
+      say(L, "Por Ziegler-Nichols (curva de reaccion), el controlador PI es Kp = 0.9" .. TAU .. "/(KL) = " .. fmt(0.9 * tau / (K * Ld), 4) .. " y Ti = 3.33L = " .. fmt(3.33 * Ld, 4) .. " s.")
+      sayver("ZN (lazo abierto)", VR.znla)
+    end
+    if Ku and Pu then
+      say(L, "Por Ziegler-Nichols en lazo cerrado (Ku = " .. fmt(Ku, 4) .. ", Pu = " .. fmt(Pu, 4) .. " s), el controlador PI es Kp = 0.45Ku = " .. fmt(0.45 * Ku, 4) .. " y Ti = Pu/1.2 = " .. fmt(Pu / 1.2, 4) .. " s.")
+      sayver("ZN (lazo cerrado)", VR.znlc)
+    end
     if hhc then
       say(L, "Por Ho-Hang-Cao (MG = " .. fmt(MG) .. ", MF = " .. fmt(MF) .. DEG .. "), el controlador es Kp = " .. fmt(hhc[2], 4) .. " y Ti = " .. fmt(hhc[3], 4) .. " s" .. (hhc[4] and (", Td = " .. fmt(hhc[4], 4) .. " s") or "") .. ".")
       local G0 = rmul(pidtf(hhc[2], hhc[3], hhc[4]), Gp)
       local mm = margins(freqobj(G0, Ld))
+      sayver("HHC", VR.hhc)
       if mm.gc[1] and mm.pc[1] then
-        say(L, "Verificando con el retardo exacto: " .. W .. "cg = " .. fmt(mm.gc[1].w, 4) .. " rad/s con MF = " .. fmt(mm.gc[1].MF, 4) .. DEG .. ", y " .. W .. "cf = " .. fmt(mm.pc[1].w, 4) .. " rad/s con MG = " .. fmt(mm.pc[1].MG, 4) .. "; los margenes coinciden con los de diseno y el lazo cerrado es estable.")
+        say(L, "Los margenes obtenidos (MF = " .. fmt(mm.gc[1].MF, 4) .. DEG .. ", MG = " .. fmt(mm.pc[1].MG, 4) .. ") se comparan con los de diseno (MF = " .. fmt(MF) .. DEG .. ", MG = " .. fmt(MG) .. ")" .. ((abs(mm.gc[1].MF - MF) < 1 and abs(mm.pc[1].MG - MG) < 0.05) and ": coinciden, el diseno se cumple." or "."))
       end
       if fK then
         local G1 = rmul(pidtf(fK * hhc[2], hhc[3], hhc[4]), Gp)
@@ -4063,7 +4116,7 @@ end
 local HOME = {y0 = 19, rh = 18, vis = 9, scroll = 0}
 
 local function paint_home(gc)
-  titlebar(gc, "Control Automatico", "v13 - APN")
+  titlebar(gc, "Control Automatico", "v14 - APN")
   -- alturas reales de las fuentes (evita superposiciones)
   gc:setFont("sansserif", "b", 10)
   local th = gc:getStringHeight("Ay")
