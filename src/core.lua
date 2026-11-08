@@ -455,6 +455,11 @@ local FUNCS = {
   rad = function(x) return x * D2R end, deg = function(x) return x * R2D end,
 }
 
+-- letras validas como incognita (una sola por expresion)
+PARAMLETTERS = {a = true, b = true, c = true, d = true, f = true, g = true, h = true, k = true,
+  m = true, n = true, p = true, q = true, r = true, u = true, v = true, x = true, y = true, z = true}
+LASTPARAM = nil
+
 local function tokenize(str)
   local toks = {}
   local i, n = 1, #str
@@ -496,10 +501,12 @@ local function tokenize(str)
           end
           if not matched then
             local ch = w:sub(k, k)
-            if ch == "s" or ch == "k" or ch == "e" then
+            if ch == "s" or ch == "e" then
               toks[#toks + 1] = {t = "id", v = ch}
+            elseif PARAMLETTERS[ch] then
+              toks[#toks + 1] = {t = "id", v = "k", name = ch}
             else
-              error("simbolo desconocido '" .. ch .. "' (use s, k, pi, e)")
+              error("simbolo desconocido '" .. ch .. "' (use s, pi, e o una letra como incognita)")
             end
             k = k + 1
           end
@@ -526,6 +533,7 @@ function parse(str, kval)
   local toks = tokenize(normalize(str))
   local pos = 1
   local usesk = false
+  local pname = nil
   local function peek() return toks[pos] end
   local function nextt() pos = pos + 1; return toks[pos - 1] end
   local function isop(t, v) return t and t.t == "op" and t.v == v end
@@ -538,6 +546,11 @@ function parse(str, kval)
     if t.t == "id" then
       if t.v == "s" then return rat({0, 1}, {1}) end
       if t.v == "k" then
+        if pname and t.name and pname ~= t.name then
+          error("solo se permite UNA incognita (hay " .. pname .. " y " .. t.name .. ")")
+        end
+        pname = t.name or pname
+        LASTPARAM = pname
         usesk = true
         if kval == nil then error("NEEDK") end
         return rconst(kval)
@@ -616,6 +629,16 @@ function parse(str, kval)
 end
 
 -- detecta si la expresion contiene k (sin evaluarla)
+-- nombre de la incognita usada en la expresion (o nil)
+function paramname(str)
+  if not str or str:match("^%s*$") then return nil end
+  LASTPARAM = nil
+  local ok = pcall(parse, str, 1)
+  local n = LASTPARAM
+  LASTPARAM = nil
+  return n
+end
+
 function usesk(str)
   if not str or str:match("^%s*$") then return false end
   local ok, err = pcall(parse, str, nil)

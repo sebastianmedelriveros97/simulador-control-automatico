@@ -460,6 +460,11 @@ local FUNCS = {
   rad = function(x) return x * D2R end, deg = function(x) return x * R2D end,
 }
 
+-- letras validas como incognita (una sola por expresion)
+PARAMLETTERS = {a = true, b = true, c = true, d = true, f = true, g = true, h = true, k = true,
+  m = true, n = true, p = true, q = true, r = true, u = true, v = true, x = true, y = true, z = true}
+LASTPARAM = nil
+
 local function tokenize(str)
   local toks = {}
   local i, n = 1, #str
@@ -501,10 +506,12 @@ local function tokenize(str)
           end
           if not matched then
             local ch = w:sub(k, k)
-            if ch == "s" or ch == "k" or ch == "e" then
+            if ch == "s" or ch == "e" then
               toks[#toks + 1] = {t = "id", v = ch}
+            elseif PARAMLETTERS[ch] then
+              toks[#toks + 1] = {t = "id", v = "k", name = ch}
             else
-              error("simbolo desconocido '" .. ch .. "' (use s, k, pi, e)")
+              error("simbolo desconocido '" .. ch .. "' (use s, pi, e o una letra como incognita)")
             end
             k = k + 1
           end
@@ -531,6 +538,7 @@ function parse(str, kval)
   local toks = tokenize(normalize(str))
   local pos = 1
   local usesk = false
+  local pname = nil
   local function peek() return toks[pos] end
   local function nextt() pos = pos + 1; return toks[pos - 1] end
   local function isop(t, v) return t and t.t == "op" and t.v == v end
@@ -543,6 +551,11 @@ function parse(str, kval)
     if t.t == "id" then
       if t.v == "s" then return rat({0, 1}, {1}) end
       if t.v == "k" then
+        if pname and t.name and pname ~= t.name then
+          error("solo se permite UNA incognita (hay " .. pname .. " y " .. t.name .. ")")
+        end
+        pname = t.name or pname
+        LASTPARAM = pname
         usesk = true
         if kval == nil then error("NEEDK") end
         return rconst(kval)
@@ -621,6 +634,16 @@ function parse(str, kval)
 end
 
 -- detecta si la expresion contiene k (sin evaluarla)
+-- nombre de la incognita usada en la expresion (o nil)
+function paramname(str)
+  if not str or str:match("^%s*$") then return nil end
+  LASTPARAM = nil
+  local ok = pcall(parse, str, 1)
+  local n = LASTPARAM
+  LASTPARAM = nil
+  return n
+end
+
 function usesk(str)
   if not str or str:match("^%s*$") then return false end
   local ok, err = pcall(parse, str, nil)
@@ -1911,28 +1934,139 @@ local function errlines(L, e, A)
   if e.ep ~= INF and e.ep > 0 then add(L, "ep = " .. fmt(100 * e.ep / A) .. " % de la referencia") end
 end
 
+-- texto de un polinomio en la incognita (orden ascendente): 10 - 3a
+local function ppoly(p, var)
+  local parts = {}
+  for i = 1, #p do
+    local c = p[i]
+    if abs(c) > 1e-12 or #p == 1 then
+      local e = i - 1
+      local mag = abs(c)
+      local cs = (e > 0 and abs(mag - 1) < 1e-12) and "" or fmt(mag)
+      local term = (e == 0) and fmt(mag) or (cs .. var .. ((e > 1) and ("^" .. e) or ""))
+      if #parts == 0 then parts[1] = (c < 0 and "-" or "") .. term
+      else parts[#parts + 1] = (c < 0 and " - " or " + ") .. term end
+    end
+  end
+  if #parts == 0 then return "0" end
+  return table.concat(parts)
+end
+
+-- ajusta un polinomio (grado <= 2) a f(p) con puntos p = 1..4; nil si no calza
+local function fitpoly(f)
+  local y1, y2, y3, y4 = f(1), f(2), f(3), f(4)
+  -- interpolacion cuadratica con 1,2,3 y verificacion en 4
+  local c2 = (y3 - 2 * y2 + y1) / 2
+  local c1 = (y2 - y1) - 3 * c2
+  local c0 = y1 - c1 - c2
+  local chk = c0 + 4 * c1 + 16 * c2
+  if abs(chk - y4) > 1e-7 * math.max(1, abs(y4)) then return nil end
+  return ptrim({c0, c1, c2})
+end
+
+-- e obj: acepta 0.1, 10% o 10 %
+local function readerr(v)
+  local s_ = v.eobj
+  if blank(s_) then return nil end
+  local pct = s_:find("%%")
+  s_ = s_:gsub("%%", "")
+  local r = parse(s_, nil)
+  if not risconst(r) then error("e obj debe ser un numero") end
+  local x = rval(r)
+  if pct then x = x / 100 end
+  return x, pct ~= nil
+end
+
 local function m_error(v)
   local L = {}
   local A = num(v, "A") or 1
   local k = num(v, "k")
-  local eobj = num(v, "eobj")
-  local sig = num(v, "senal") or 1
+  local eobj, waspct = readerr(v)
+  local sig = num(v, "senal") or 0
+  local pn = paramname(v.Gp) or paramname(v.Gc) or "k"
   local needk = (usesk(v.Gc) or usesk(v.Gp)) and k == nil
   if needk then
-    if not eobj then error("Hay k sin valor: ingrese k, o 'e obj' para despejar k") end
+    if not eobj then error("Hay una incognita (" .. pn .. ") sin valor: escriba su valor en el campo k, o el error deseado en 'e obj' (ej 0.1 o 10%) para despejarla") end
+    local function G0at(kk) return rmul(tf(v, "Gc", kk, "1"), tf(v, "Gp", kk)) end
+    -- tipo con un valor generico de la incognita
+    local Gg = G0at(1.37)
+    local Ng = pzeroroots(Gg.d) - pzeroroots(Gg.n)
+    if sig == 0 then sig = math.min(math.max(Ng, 0) + 1, 3) end
     local function E(kk)
-      local G0 = rmul(tf(v, "Gc", kk, "1"), tf(v, "Gp", kk))
-      local e = sserrors(G0, A)
+      local e = sserrors(G0at(kk), A)
       if sig == 1 then return e.ep elseif sig == 2 then return e.ev else return e.ea end
     end
     local names = {"escalon (ep)", "rampa (ev)", "parabola (ea)"}
-    sep(L, "Despeje de k para " .. names[sig] .. " = " .. fmt(eobj))
-    local e1, e2 = E(1.37), E(2.91)
-    if abs(e1 - e2) < 1e-12 * math.max(1, abs(e1)) then
-      add(L, "El error NO depende de k (e = " .. fmt(e1) .. "): no se puede cumplir")
-      add(L, "con este parametro.")
+    local cname = ({"Kp", "Kv", "Ka"})[sig]
+    sep(L, "Despeje de " .. pn .. " para " .. names[sig] .. " = " .. fmt(eobj) .. (waspct and (" (" .. fmt(eobj * 100) .. "%)") or ""))
+    -- Paso 1: tipo
+    sep(L, "Paso 1: Tipo del sistema")
+    add(L, "G0(s) = Gc" .. "\194\183" .. "Gp (con " .. pn .. " generico): " .. Ng .. " polo(s) en s = 0 " .. U.arrow .. " tipo " .. Ng)
+    add(L, "Senal usada: " .. names[sig] .. ((num(v, "senal") or 0) == 0 and "  (automatica segun el tipo)" or ""))
+    local needN = sig - 1
+    if Ng ~= needN then
+      local e1 = E(1.37)
+      add(L, "Con tipo " .. Ng .. " ante " .. names[sig] .. " el error es " .. fmt(e1) .. " para todo " .. pn .. ".")
+      add(L, "(Para un error finito y ajustable use la senal " .. names[math.min(math.max(Ng, 0) + 1, 3)] .. ", o deje senal = 0.)")
+      summary(L, {"El error ante " .. names[sig] .. " es " .. fmt(e1) .. " y no depende de " .. pn})
+      say(L, "El sistema es tipo " .. Ng .. ", por lo que ante " .. names[sig] .. " el error es " .. fmt(e1) .. " independiente de " .. pn .. "; no se puede ajustar.")
       return L
     end
+    -- Paso 2: constante de error en funcion de la incognita
+    sep(L, "Paso 2: Constante " .. cname .. " en funcion de " .. pn)
+    local function parts(kk)
+      local G = G0at(kk)
+      local zn, zd = pzeroroots(G.n), pzeroroots(G.d)
+      return pshiftdown(G.n, zn)[1], pshiftdown(G.d, zd)[1]
+    end
+    local fn = fitpoly(function(x) local a = parts(x); return a end)
+    local fd = fitpoly(function(x) local _, b = parts(x); return b end)
+    local symb = fn and fd
+    if symb then
+      local nstr, dstr = ppoly(fn, pn), ppoly(fd, pn)
+      local function par(x) return x:find("[ %+%-]", 2) and ("(" .. x .. ")") or x end
+      local function frac(a, b)
+        if b == "1" then return a end
+        local bb = (tonumber(b) or #b == 1) and b or ("(" .. b .. ")")
+        return par(a) .. "/" .. bb
+      end
+      local As = (abs(A - 1) < 1e-12) and "" or (fmt(A) .. "\194\183")
+      local lim = ({"G0(s)", "s" .. "\194\183" .. "G0(s)", "s" .. U.sq .. "\194\183" .. "G0(s)"})[sig]
+      add(L, cname .. " = lim(s" .. U.arrow .. "0) " .. lim .. " = " .. frac(nstr, dstr))
+      sep(L, "Paso 3: Ecuacion del error")
+      local eq
+      if sig == 1 then
+        add(L, "ep = A/(1 + Kp) = " .. fmt(A) .. "/(1 + " .. frac(nstr, dstr) .. ") = " .. As .. par(dstr) .. "/(" .. dstr .. " + " .. nstr .. ")")
+        -- A*d = e*(d+n)  ->  (A-e) d - e n = 0
+        eq = psub(pscale(fd, A - eobj), pscale(fn, eobj))
+      else
+        add(L, ({"", "ev", "ea"})[sig] .. " = A/" .. cname .. " = " .. As .. frac(dstr, nstr))
+        eq = psub(pscale(fd, A), pscale(fn, eobj))
+      end
+      eq = ptrim(eq)
+      add(L, "Igualando a " .. fmt(eobj) .. ":  " .. ppoly(eq, pn) .. " = 0")
+      if #eq == 1 then
+        add(L, "La ecuacion no contiene a " .. pn .. ": " .. cname .. " = " .. ((abs(fd[1]) > 1e-12) and fmt(fn[1] / fd[1]) or U.inf) .. " no depende de " .. pn .. " " .. U.arrow .. " NO se puede cumplir.")
+        summary(L, {cname .. " no depende de " .. pn .. ": el error no se puede ajustar con " .. pn})
+        say(L, "La constante " .. cname .. " no depende de " .. pn .. " (el parametro no aparece en lim), por lo que no es posible obtener el error pedido ajustando " .. pn .. ".")
+        return L
+      elseif #eq == 2 then
+        local nn_, dd_ = -eq[1], eq[2]
+        if dd_ < 0 then nn_, dd_ = -nn_, -dd_ end
+        add(L, pn .. " = " .. ((abs(dd_ - 1) < 1e-12) and fmt(nn_, 6) or (fmt(nn_) .. "/" .. fmt(dd_) .. " = " .. fmt(nn_ / dd_, 6))))
+      else
+        add(L, "Ecuacion de 2o grado: " .. pn .. " = " .. rootsstr(proots(eq), 6))
+      end
+    else
+      local e1, e2 = E(1.37), E(2.91)
+      if abs(e1 - e2) < 1e-12 * math.max(1, abs(e1)) then
+        add(L, "El error NO depende de " .. pn .. " (e = " .. fmt(e1) .. "): no se puede cumplir.")
+        summary(L, {"El error no depende de " .. pn})
+        return L
+      end
+      add(L, "(" .. cname .. " depende de " .. pn .. " en forma no polinomica; se despeja numericamente)")
+    end
+    -- solucion numerica (y verificacion de estabilidad)
     local ks = {}
     for e = -40, 50 do ks[#ks + 1] = 10 ^ (e / 10) end
     local sols = {}
@@ -1959,22 +2093,28 @@ local function m_error(v)
         end
       end
     end
-    if #sols == 0 then add(L, "No se encontro k en [-1e5, 1e5]") end
-    for _, kk in ipairs(sols) do
-      local G0 = rmul(tf(v, "Gc", kk, "1"), tf(v, "Gp", kk))
-      local T = closedloop(G0)
-      local st = stabilitytext(proots(T.d))
-      add(L, "k = " .. fmt(kk, 6) .. "   " .. U.arrow .. " " .. st)
-    end
-    add(L, "Verifique luego con k en el campo k.")
+    sep(L, "Paso 4: Verificacion de estabilidad")
+    if #sols == 0 then add(L, "No se encontro " .. pn .. " en [-1e5, 1e5]") end
     local S = {}
-    for _, kk in ipairs(sols) do S[#S + 1] = "k = " .. fmt(kk, 6) end
+    local stab = {}
+    for _, kk in ipairs(sols) do
+      local T = closedloop(G0at(kk))
+      local r = proots(T.d)
+      local st = stabilitytext(r)
+      stab[#stab + 1] = isstable(r)
+      add(L, pn .. " = " .. fmt(kk, 6) .. "   " .. U.arrow .. " " .. st)
+      S[#S + 1] = pn .. " = " .. fmt(kk, 6) .. ((isstable(r)) and "  (lazo estable)" or "  (lazo INESTABLE: no sirve)")
+    end
+    add(L, "(El teorema del valor final solo vale si el lazo cerrado es estable.)")
+    add(L, "Verifique luego escribiendo el valor en el campo k.")
     if #S == 0 then S[1] = "sin solucion" end
-    if sols[1] then metric(L, "ksol", "k requerido", sols[#sols]) end
-    local pos = {}
-    for _, kk in ipairs(sols) do if kk > 0 then pos[#pos + 1] = fmt(kk, 6) end end
-    if #pos > 0 then
-      say(L, "Para obtener un error en estado estable de " .. fmt(eobj) .. " ante " .. ({"un escalon", "una rampa", "una parabola"})[sig] .. " se requiere K = " .. table.concat(pos, " o ") .. " (verificando que el lazo cerrado sea estable).")
+    if sols[1] then metric(L, "ksol", pn .. " requerido", sols[#sols]) end
+    local good = {}
+    for i, kk in ipairs(sols) do if stab[i] then good[#good + 1] = fmt(kk, 6) end end
+    if #good > 0 then
+      say(L, "El sistema es tipo " .. Ng .. "; para obtener un error en estado estable de " .. fmt(eobj) .. " ante " .. ({"un escalon", "una rampa", "una parabola"})[sig] .. " se requiere " .. pn .. " = " .. table.concat(good, " o ") .. ", valor con el que el lazo cerrado es estable.")
+    elseif #sols > 0 then
+      say(L, "El valor que da el error pedido (" .. pn .. " = " .. fmt(sols[1], 6) .. ") hace INESTABLE el lazo cerrado, por lo que el teorema del valor final no aplica y la especificacion no se puede cumplir.")
     end
     summary(L, S)
     return L
@@ -3508,7 +3648,7 @@ local HELP = {
   "kp(1+1/(ti s)) -> escriba numeros: 1.3(1+1/(5s))",
   "Funciones: sqrt ln log exp sin cos tan, pi, e",
   "El retardo e^(-Ls) va en el campo L (no en G).",
-  "k = parametro libre: dejelo vacio para",
+  "Incognita: k o cualquier letra (a, b, d, K...). Dejela vacia para",
   "obtener el rango (Routh) o despejarlo (error).",
   "== Convenios ==",
   "ts(2%)=4/(" .. U.zeta .. U.wn .. "), ts(5%)=3/(" .. U.zeta .. U.wn .. "). MF en grados, MG lineal y dB.",
@@ -3705,9 +3845,9 @@ MODULES = {
     {"Gc", "Gc(s)", "Controlador (vacio = 1)", "1"},
     {"Gp", "Gp(s)", "Planta. Ej: 63/(s(s+10)(s+1)) ; K/(s+1)"},
     {"A", "A", "Amplitud de la referencia", "1"},
-    {"k", "k", "Valor de k (vacio + e obj = despejar k)"},
-    {"eobj", "e obj", "Error deseado (ej 0.1) para despejar k"},
-    {"senal", "senal", "1 escalon  2 rampa  3 parabola (para despeje)", "1"},
+    {"k", "incognita", "Valor de la incognita (k, a, b, d...); vacio + e obj = despejarla"},
+    {"eobj", "e obj", "Error deseado: 0.1 o 10% (deje k vacio para despejar)"},
+    {"senal", "senal", "0 automatica (segun tipo)  1 escalon  2 rampa  3 parabola", "0"},
   }},
   {title = "Routh-Hurwitz", short = "tabla, rango de k", run = m_routh, fields = {
     {"P", "P(s)", "Pol. caracteristico (opcional). Ej: s^3+4s^2+5s+k"},
@@ -3923,7 +4063,7 @@ end
 local HOME = {y0 = 19, rh = 18, vis = 9, scroll = 0}
 
 local function paint_home(gc)
-  titlebar(gc, "Control Automatico", "v12 - APN")
+  titlebar(gc, "Control Automatico", "v13 - APN")
   -- alturas reales de las fuentes (evita superposiciones)
   gc:setFont("sansserif", "b", 10)
   local th = gc:getStringHeight("Ay")
