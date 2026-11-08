@@ -43,9 +43,15 @@ local function sep(L, t) L[#L + 1] = "== " .. t .. " ==" end
 local function view(L, v) L.views = L.views or {}; L.views[#L.views + 1] = v end
 
 -- recuadro de respuestas al inicio del resultado
+local function say(L, txt) L.say = L.say or {}; L.say[#L.say + 1] = txt end
+
 local function summary(L, items)
   local out = {"== RESPUESTAS =="}
   for _, it in ipairs(items) do out[#out + 1] = it end
+  if L.say then
+    out[#out + 1] = "== Respuesta redactada =="
+    for _, t in ipairs(L.say) do out[#out + 1] = t end
+  end
   if L.chainhelp then
     for _, h in ipairs(L.chainhelp) do out[#out + 1] = h end
   end
@@ -236,6 +242,13 @@ local function m_specs(v)
     end
     local V = timeview(rat({wn * wn}, {wn * wn, 2 * sig, 1}), 1, "2o orden estandar", "y(t) escalon unitario")
     view(L, V)
+    say(L, "El coeficiente de amortiguamiento es " .. Z .. " = " .. fmt(z, 4) .. " y la frecuencia natural es " .. WN .. " = " .. fmt(wn, 4) .. " rad/s.")
+    if z < 1 and wd then
+      say(L, "Los polos deseados de lazo cerrado son s = -" .. fmt(sig, 4) .. " " .. PM .. " j" .. fmt(wd, 4) .. ", es decir, el polinomio deseado es s" .. U.sq .. " + " .. fmt(2 * sig, 4) .. "s + " .. fmt(wn * wn, 4) .. ".")
+      say(L, "Con estos valores: ts(2%) = " .. fmt(4 / sig, 4) .. " s, Mp = " .. fmt(Mp_from_zeta(z), 4) .. " %, tp = " .. fmt(pi / wd, 4) .. " s y tr = " .. fmt((pi - math.acos(z)) / wd, 4) .. " s.")
+    end
+  else
+    say(L, "El coeficiente de amortiguamiento es " .. Z .. " = " .. fmt(z, 4) .. ".")
   end
   summary(L, S)
   return L
@@ -306,6 +319,15 @@ local function m_polos_k(v, lazo)
     end
   end
   add(L, "Ingrese k para evaluar polos, ts y Mp.")
+  if lazo == 1 then
+    say(L, "La funcion de transferencia de lazo cerrado en funcion de K es GLC(s) = Y(s)/R(s) = [" .. polyk_str(N0, N1) .. "] / [" .. polyk_str(C0, C1) .. "].")
+    local n = math.max(#C0, #C1)
+    if n == 3 and abs(C1[3] or 0) < 1e-12 and abs(C1[2] or 0) < 1e-12 and abs(C0[3] or 0) > 1e-12 then
+      local l = C0[3]
+      say(L, "Comparando con la forma estandar, " .. WN .. U.sq .. " = " .. linstr((C0[1] or 0) / l, (C1[1] or 0) / l) .. " y 2" .. Z .. WN .. " = " .. fmt((C0[2] or 0) / l) .. "; como " .. Z .. WN .. " = " .. fmt((C0[2] or 0) / l / 2) .. " no depende de K, el tiempo de asentamiento ts(2%) = 4/(" .. Z .. WN .. ") = " .. fmt(8 / ((C0[2] or 0) / l)) .. " s no cambia al aumentar K, mientras que " .. WN .. " aumenta, " .. Z .. " disminuye y el sobrepaso Mp aumenta (respuesta mas oscilatoria).")
+    end
+    summary(L, {"GLC(s) = [" .. polyk_str(N0, N1) .. "] / [" .. polyk_str(C0, C1) .. "]"})
+  end
   return L
 end
 
@@ -359,6 +381,35 @@ local function m_polos(v)
       add(L, "y(" .. U.inf .. ") = " .. fmt(m.yss) .. ";  " .. metricstext(m))
       add(L, "(valores reales; las formulas de 2o orden son aproximaciones)")
       S[#S + 1] = "Real: " .. metricstext(m)
+    end
+    do
+      say(L, ((lazo == 1) and "La funcion de transferencia de lazo cerrado es GLC(s) = Y(s)/R(s) = " or "La funcion de transferencia es G(s) = ") .. rstr(T) .. ".")
+      say(L, "Su ecuacion caracteristica es " .. pstr(T.d) .. " = 0, cuyos polos son " .. rootsstr(poles, 4) .. "; por lo tanto el sistema es " .. (st and "estable (todos los polos en el semiplano izquierdo)." or "NO estable."))
+      if st and #poles >= 1 then
+        local dom = poles[1]
+        local nd = (dom[2] ~= 0) and 2 or 1
+        if #poles > nd then
+          local ratio = abs(poles[nd + 1][1]) / abs(dom[1])
+          if ratio >= 5 then
+            say(L, ((nd == 2) and ("Los polos dominantes son " .. fmt(dom[1], 4) .. " " .. PM .. " j" .. fmt(abs(dom[2]), 4)) or ("El polo dominante es " .. fmt(dom[1], 4))) .. ", ya que el siguiente polo esta " .. fmt(ratio, 3) .. " veces mas lejos del eje imaginario (" .. U.ge .. " 5); por ello es razonable aproximar por un modelo de orden " .. nd .. " que conserva la ganancia estatica.")
+            local dpp = {dom}
+            if nd == 2 then dpp[2] = {dom[1], -dom[2]} end
+            local den = pfromroots(dpp, 1)
+            if abs(T.d[1]) > 1e-12 then say(L, "El modelo reducido es Gr(s) = " .. fmt(T.n[1] / T.d[1] * den[1], 5) .. " / (" .. pstr(den) .. "), con Gr(0) = GLC(0) = " .. fmt(T.n[1] / T.d[1], 4) .. ".") end
+          else
+            say(L, "El siguiente polo esta solo " .. fmt(ratio, 3) .. " veces mas lejos que el dominante (< 5), por lo que NO es razonable despreciarlo.")
+          end
+        end
+        if nd == 2 then
+          local sg, w = -dom[1], abs(dom[2])
+          local wnn = sqrt(sg * sg + w * w)
+          local zz = sg / wnn
+          say(L, "Con " .. Z .. " = " .. fmt(zz, 4) .. " y " .. WN .. " = " .. fmt(wnn, 4) .. " rad/s se obtiene: ts(2%) = " .. fmt(4 / sg, 4) .. " s, ts(5%) = " .. fmt(3 / sg, 4) .. " s, tr = " .. fmt((pi - math.acos(zz)) / w, 4) .. " s, tp = " .. fmt(pi / w, 4) .. " s y Mp = " .. fmt(Mp_from_zeta(zz), 4) .. " %.")
+        else
+          say(L, "Con el polo dominante en " .. fmt(dom[1], 4) .. ": " .. TAU .. " = " .. fmt(1 / abs(dom[1]), 4) .. " s, ts(2%) = " .. fmt(4 / abs(dom[1]), 4) .. " s, sin sobrepaso (Mp = 0 %).")
+        end
+        if m.yss then say(L, "El valor final ante el escalon es y(" .. U.inf .. ") = " .. fmt(m.yss) .. ".") end
+      end
     end
     chain(L, "4", 4, {Gc = v.Gc or "1", Gp = v.Gp, A = v.A or "1", k = v.k or "", eobj = "", senal = "1"}, "error estacionario de este lazo")
     chain(L, "5", 5, {P = "", Gc = v.Gc or "1", Gp = v.Gp, k = v.k or ""}, "Routh / estabilidad")
@@ -498,6 +549,15 @@ local function m_resp(v)
       curves = {{t = ts, y = ys, name = "y(t) " .. (diverge and "(diverge)" or "")}},
       marks = yss and {Mp = m.Mp, tp = m.tp, ymax = ymax, ts = m.ts2} or nil})
     local S = {txt}
+    say(L, "La respuesta temporal ante " .. ((ent == 0) and "un impulso" or ((ent == 2) and "una rampa" or "un escalon")) .. " de magnitud " .. fmt(A) .. " es " .. txt .. ".")
+    if diverge then
+      say(L, "El sistema es INESTABLE: existen modos con parte real positiva (o nula) que no decaen, por lo que y(t) crece sin limite y nunca alcanza el estado estable; no tiene sentido hablar del modo mas veloz para llegar al estado estable.")
+    else
+      if fast and slow then
+        say(L, "Todos los modos decaen, por lo que el sistema es estable. El modo mas veloz es el asociado al polo " .. fmtc(fast[1], fast[2], 4) .. " (mayor |Re|, se extingue en " .. U.approx .. " " .. fmt(4 / abs(fast[1]), 4) .. " s); el modo dominante es el del polo " .. fmtc(slow[1], slow[2], 4) .. ", que fija el tiempo de asentamiento ts " .. U.approx .. " " .. fmt(4 / abs(slow[1]), 4) .. " s.")
+      end
+      if yss then say(L, "El valor final es y(" .. U.inf .. ") = " .. fmt(yss) .. ".") end
+    end
     if diverge then S[#S + 1] = "INESTABLE: y(t) no alcanza estado estable"
     else
       if fast then S[#S + 1] = "Modo mas veloz: polo " .. fmtc(fast[1], fast[2], 4) .. ";  dominante: " .. fmtc(slow[1], slow[2], 4) end
@@ -579,6 +639,11 @@ local function m_error(v)
     local S = {}
     for _, kk in ipairs(sols) do S[#S + 1] = "k = " .. fmt(kk, 6) end
     if #S == 0 then S[1] = "sin solucion" end
+    local pos = {}
+    for _, kk in ipairs(sols) do if kk > 0 then pos[#pos + 1] = fmt(kk, 6) end end
+    if #pos > 0 then
+      say(L, "Para obtener un error en estado estable de " .. fmt(eobj) .. " ante " .. ({"un escalon", "una rampa", "una parabola"})[sig] .. " se requiere K = " .. table.concat(pos, " o ") .. " (verificando que el lazo cerrado sea estable).")
+    end
     summary(L, S)
     return L
   end
@@ -595,6 +660,10 @@ local function m_error(v)
   local e = sserrors(G0, A)
   errlines(L, e, A)
   add(L, "Parabola: r(t)=A t" .. U.sq .. "/2 (R=A/s" .. "\194\179" .. ")")
+  say(L, "La funcion de lazo abierto es G0(s) = " .. rstr(G0) .. ", que tiene " .. math.max(e.N, 0) .. " integrador(es): el sistema es tipo " .. e.N .. ".")
+  if not ok then say(L, "OJO: el lazo cerrado no es estable, por lo que el teorema del valor final no es aplicable.") end
+  say(L, "Las constantes de error son Kp = " .. fmt(e.Kp) .. ", Kv = " .. fmt(e.Kv) .. " y Ka = " .. fmt(e.Ka) .. ".")
+  say(L, "Por lo tanto, el error en estado estable ante un escalon de magnitud " .. fmt(A) .. " es ep = " .. fmt(e.ep) .. ", ante una rampa es ev = " .. fmt(e.ev) .. " y ante una parabola es ea = " .. fmt(e.ea) .. ".")
   chain(L, "3", 3, {Gc = v.Gc or "1", Gp = v.Gp, lazo = "1", A = v.A or "1", k = v.k or ""}, "polos/respuesta LC")
   chain(L, "5", 5, {P = "", Gc = v.Gc or "1", Gp = v.Gp, k = v.k or ""}, "Routh / estabilidad")
   chain(L, "6", 6, {Gc = v.Gc or "1", Gp = v.Gp, L = "0", k = v.k or ""}, "margenes / Bode")
@@ -956,6 +1025,32 @@ local function m_routh(v)
       S[#S + 1] = "Estable para " .. a .. " < k < " .. b
     end
     if #S == 0 then S[1] = "Ningun k estabiliza el lazo" end
+    if lin then say(L, "La ecuacion caracteristica de lazo cerrado es " .. polyk_str(P0, d1) .. " = 0.") end
+    do
+      local phys = {}
+      for _, iv in ipairs(ivs) do
+        local a, b = math.max(iv[1], 0), iv[2]
+        if a < b then phys[#phys + 1] = {a, b} end
+      end
+      local txts = {}
+      for _, iv in ipairs(phys) do txts[#txts + 1] = fmt(iv[1], 6) .. " < K < " .. ((iv[2] == INF) and U.inf or fmt(iv[2], 6)) end
+      if #txts > 0 then
+        say(L, "Aplicando el criterio de Routh-Hurwitz (toda la primera columna positiva), el sistema en lazo cerrado es estable para " .. table.concat(txts, " o ") .. ".")
+      else
+        say(L, "Aplicando el criterio de Routh-Hurwitz, no existe K > 0 que haga estable el lazo cerrado.")
+      end
+      for _, kb in ipairs(bounds) do
+        if kb > 0 then
+          local r = proots(charpoly(v, kb))
+          for _, q in ipairs(r) do
+            if abs(q[1]) < 1e-4 * math.max(1, abs(q[2])) and q[2] > 1e-6 then
+              say(L, "Para K = " .. fmt(kb, 6) .. " el sistema es marginalmente estable: oscila con frecuencia " .. W .. " = " .. fmt(q[2], 5) .. " rad/s (polos en s = " .. PM .. "j" .. fmt(q[2], 5) .. ").")
+              break
+            end
+          end
+        end
+      end
+    end
     if blank(v.P) then
       chain(L, "3", 3, {Gc = v.Gc or "k", Gp = v.Gp, lazo = "1", A = "1", k = v.k or ""}, "polos/respuesta LC (GLC en funcion de k si k vacio)")
       chain(L, "4", 4, {Gc = v.Gc or "k", Gp = v.Gp, A = "1", k = v.k or "", eobj = "", senal = "1"}, "error estacionario")
@@ -998,6 +1093,8 @@ local function m_routh(v)
   add(L, (stabilitytext(roots)))
   do
     local S = {"Cambios de signo en 1a columna: " .. ch, (stabilitytext(roots))}
+    say(L, "La ecuacion caracteristica es " .. pstr(P) .. " = 0.")
+    say(L, "En la primera columna de la tabla de Routh hay " .. ch .. " cambio(s) de signo, por lo que hay " .. ch .. " polo(s) en el semiplano derecho: el sistema en lazo cerrado es " .. ((ch == 0 and isstable(roots)) and "ESTABLE." or ((ch == 0) and "criticamente estable (polos sobre el eje j" .. W .. ")." or "INESTABLE.")))
     if blank(v.P) then
       chain(L, "3", 3, {Gc = v.Gc or "k", Gp = v.Gp, lazo = "1", A = "1", k = v.k or ""}, "polos/respuesta LC (GLC en funcion de k si k vacio)")
       chain(L, "4", 4, {Gc = v.Gc or "k", Gp = v.Gp, A = "1", k = v.k or "", eobj = "", senal = "1"}, "error estacionario")
@@ -1175,6 +1272,11 @@ local function m_freq(v)
     S[#S + 1] = m.gc[1] and (W .. "cg = " .. fmt(m.gc[1].w) .. " rad/s,  MF = " .. fmt(m.gc[1].MF, 4) .. DEG) or ("MF = " .. U.inf)
     S[#S + 1] = m.pc[1] and (W .. "cf = " .. fmt(m.pc[1].w) .. " rad/s,  MG = " .. fmt(m.pc[1].MG, 4) .. " (" .. fmt(db(m.pc[1].MG), 4) .. " dB)") or ("MG = " .. U.inf)
     S[#S + 1] = (mf > 0 and mg > 1) and "Lazo cerrado ESTABLE" or "Lazo cerrado INESTABLE"
+    if m.gc[1] then say(L, "La frecuencia de cruce de ganancia (|G0(j" .. W .. ")| = 1) es " .. W .. "cg = " .. fmt(m.gc[1].w, 4) .. " rad/s; ahi la fase es " .. fmt(m.gc[1].ph, 4) .. DEG .. ", por lo que el margen de fase es MF = 180" .. DEG .. " + (" .. fmt(m.gc[1].ph, 4) .. DEG .. ") = " .. fmt(m.gc[1].MF, 4) .. DEG .. ".")
+    else say(L, "La magnitud no cruza 1 (0 dB), por lo que el margen de fase es infinito.") end
+    if m.pc[1] then say(L, "La frecuencia de cruce de fase (" .. U.ang .. "G0 = -180" .. DEG .. ") es " .. W .. "cf = " .. fmt(m.pc[1].w, 4) .. " rad/s; ahi |G0| = " .. fmt(m.pc[1].mag, 4) .. ", por lo que el margen de ganancia es MG = 1/" .. fmt(m.pc[1].mag, 4) .. " = " .. fmt(m.pc[1].MG, 4) .. " (" .. fmt(db(m.pc[1].MG), 4) .. " dB).")
+    else say(L, "La fase nunca alcanza -180" .. DEG .. ", por lo que el margen de ganancia es infinito.") end
+    say(L, (mf > 0 and mg > 1) and ("Como MF > 0" .. DEG .. " y MG > 1, el sistema en lazo cerrado es ESTABLE.") or ("Como MF " .. U.le .. " 0" .. DEG .. " o MG " .. U.le .. " 1, el sistema en lazo cerrado es INESTABLE."))
     if Ld == 0 then
       chain(L, "3", 3, {Gc = v.Gc or "1", Gp = v.Gp, lazo = "1", A = "1", k = v.k or ""}, "polos/respuesta LC")
       chain(L, "4", 4, {Gc = v.Gc or "1", Gp = v.Gp, A = "1", k = v.k or "", eobj = "", senal = "1"}, "error estacionario")
@@ -1478,6 +1580,14 @@ local function m_place(v)
     if st and m.yss then S[#S + 1] = "Simulacion: " .. metricstext(m) end
     S[#S + 1] = "tab: plano s y respuesta y(t)"
     L.res = {phi = phi, a = zc or 0, Kc = Kc}
+    say(L, "A partir de las especificaciones, los polos deseados de lazo cerrado son pd = -" .. fmt(sig, 4) .. " " .. PM .. " j" .. fmt(wd, 4) .. ".")
+    if useI then say(L, "Como se exige error nulo ante escalon y la planta es tipo 0, se agrega accion integral (polo en el origen).")
+    else say(L, "Como no se exige seguimiento exacto en regimen permanente, no se requiere accion integral.") end
+    say(L, "La condicion de angulo en pd entrega una deficiencia angular " .. PHI .. "d = " .. fmt(phi, 4) .. DEG .. "; por lo tanto, la estructura minima es un controlador " .. names[nz] .. ((nz == 1) and " (un cero aporta entre 0" .. DEG .. " y 90" .. DEG .. ")." or ((nz == 2) and " (se requieren dos ceros, " .. PHI .. "d/2 cada uno)." or ".")))
+    if nz > 0 then say(L, "El cero del controlador se ubica en s = -" .. fmt(zc, 5) .. " y, por la condicion de magnitud, Kc = " .. fmt(Kc, 5) .. ".") end
+    say(L, "El controlador obtenido es Gc(s) = " .. gcs .. ".")
+    say(L, "Se verifica que los polos de lazo cerrado son " .. rootsstr(r, 4) .. ", que incluyen a pd; el sistema es " .. ((isstable(r)) and "estable." or "inestable."))
+    say(L, "El error en estado estable ante escalon unitario es ep = " .. fmt(e.ep, 4) .. ((e.ep == 0) and " (seguimiento exacto)." or (" (la salida se estabiliza en " .. fmt(1 - e.ep, 4) .. ").")))
     local gtxt = rexact(Gc)
     chain(L, "3", 3, {Gc = gtxt, Gp = v.Gp, lazo = "1", A = "1", k = ""}, "polos y respuesta LC con este Gc")
     chain(L, "6", 6, {Gc = gtxt, Gp = v.Gp, L = "0", k = ""}, "margenes / Bode con este Gc")
@@ -1678,6 +1788,23 @@ local function m_empir(v)
       if tau2 then gp = string.format("%.7g/((%.7g*s+1)*(%.7g*s+1))", K, tau, tau2) end
       chain(L, "6", 6, {Gc = gtxt, Gp = gp, L = string.format("%.7g", Ld), k = ""}, "Bode / margenes del lazo HHC")
     end
+    if haveModel then say(L, "Por Ziegler-Nichols (curva de reaccion), el controlador PI es Kp = 0.9" .. TAU .. "/(KL) = " .. fmt(0.9 * tau / (K * Ld), 4) .. " y Ti = 3.33L = " .. fmt(3.33 * Ld, 4) .. " s.") end
+    if Ku and Pu then say(L, "Por Ziegler-Nichols en lazo cerrado (Ku = " .. fmt(Ku, 4) .. ", Pu = " .. fmt(Pu, 4) .. " s), el controlador PI es Kp = 0.45Ku = " .. fmt(0.45 * Ku, 4) .. " y Ti = Pu/1.2 = " .. fmt(Pu / 1.2, 4) .. " s.") end
+    if hhc then
+      say(L, "Por Ho-Hang-Cao (MG = " .. fmt(MG) .. ", MF = " .. fmt(MF) .. DEG .. "), el controlador es Kp = " .. fmt(hhc[2], 4) .. " y Ti = " .. fmt(hhc[3], 4) .. " s" .. (hhc[4] and (", Td = " .. fmt(hhc[4], 4) .. " s") or "") .. ".")
+      local G0 = rmul(pidtf(hhc[2], hhc[3], hhc[4]), Gp)
+      local mm = margins(freqobj(G0, Ld))
+      if mm.gc[1] and mm.pc[1] then
+        say(L, "Verificando con el retardo exacto: " .. W .. "cg = " .. fmt(mm.gc[1].w, 4) .. " rad/s con MF = " .. fmt(mm.gc[1].MF, 4) .. DEG .. ", y " .. W .. "cf = " .. fmt(mm.pc[1].w, 4) .. " rad/s con MG = " .. fmt(mm.pc[1].MG, 4) .. "; los margenes coinciden con los de diseno y el lazo cerrado es estable.")
+      end
+      if fK then
+        local G1 = rmul(pidtf(fK * hhc[2], hhc[3], hhc[4]), Gp)
+        local m1 = margins(freqobj(G1, Ld))
+        if mm.gc[1] and m1.gc[1] and mm.pc[1] and m1.pc[1] then
+          say(L, "Al multiplicar Kp por " .. fmt(fK) .. " (Ti fijo), " .. W .. "cg sube de " .. fmt(mm.gc[1].w, 4) .. " a " .. fmt(m1.gc[1].w, 4) .. " rad/s (respuesta mas rapida), pero el MF baja de " .. fmt(mm.gc[1].MF, 4) .. DEG .. " a " .. fmt(m1.gc[1].MF, 4) .. DEG .. " y el MG de " .. fmt(mm.pc[1].MG, 4) .. " a " .. fmt(m1.pc[1].MG, 4) .. ": disminuye la estabilidad relativa (mas oscilacion y sobrepaso)" .. ((m1.gc[1].MF <= 0 or m1.pc[1].MG <= 1) and ", llegando a ser INESTABLE." or ", aunque sigue estable."))
+        end
+      end
+    end
     if #S > 0 then
       if L.views then S[#S + 1] = "tab: respuesta simulada" end
       summary(L, S)
@@ -1739,6 +1866,8 @@ local function m_ident(v)
     curves = {{t = ts, y = ys, name = "modelo FOPDT"}},
     legend = {"K = " .. fmt(K, 4) .. ",  " .. TAU .. " = " .. fmt(tau, 4) .. " s,  L = " .. fmt(Ld, 4) .. " s"}})
   chain(L, "8", 8, {K = string.format("%.7g", K), tau = string.format("%.7g", tau), L = string.format("%.7g", Ld), tau2 = ""}, "llevar el modelo a Sintonia (ZN / HHC)")
+  say(L, "A partir de la curva de reaccion, la ganancia es K = " .. fmt(K, 4) .. ", la constante de tiempo es " .. TAU .. " = " .. fmt(tau, 4) .. " s y el retardo es L = " .. fmt(Ld, 4) .. " s.")
+  say(L, "El modelo identificado es Gp(s) = " .. fmt(K, 4) .. "e^(-" .. fmt(Ld, 4) .. "s)/(" .. fmt(tau, 4) .. "s + 1).")
   summary(L, {"K = " .. fmt(K) .. ",  " .. TAU .. " = " .. fmt(tau) .. " s,  L = " .. fmt(Ld) .. " s",
     "Gp = " .. fmt(K) .. "e^(-" .. fmt(Ld) .. "s)/(" .. fmt(tau) .. "s+1)"})
   return L
