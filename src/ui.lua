@@ -96,7 +96,7 @@ local function compute()
         local merged = {}
         for _, l in ipairs(cl) do merged[#merged + 1] = l end
         for _, l in ipairs(res) do merged[#merged + 1] = l end
-        merged.views = res.views; merged.chain = res.chain; merged.met = res.met
+        merged.views = res.views; merged.chain = res.chain; merged.met = res.met; merged.cansim = res.cansim
         rlines = merged
       end
     end
@@ -154,7 +154,7 @@ end
 local HOME = {y0 = 19, rh = 18, vis = 9, scroll = 0}
 
 local function paint_home(gc)
-  titlebar(gc, "Control Automatico", "v11 - APN")
+  titlebar(gc, "Control Automatico", "v12 - APN")
   -- alturas reales de las fuentes (evita superposiciones)
   gc:setFont("sansserif", "b", 10)
   local th = gc:getStringHeight("Ay")
@@ -533,7 +533,7 @@ local CURVE = {{0x10, 0x40, 0xE0}, {0xD0, 0x10, 0x10}, {0x00, 0x96, 0x20}, {0x90
 local function paint_time(gc, V)
   vtitle(gc, V.title or "Respuesta y(t)")
   local leg = {}
-  for i, c in ipairs(V.curves) do leg[#leg + 1] = {c.name, CURVE[i]} end
+  for i, c in ipairs(V.curves) do if c.name then leg[#leg + 1] = {c.name, c.col or CURVE[i]} end end
   for _, l in ipairs(V.legend or {}) do leg[#leg + 1] = {l, C.black} end
   local ly = legendbox(gc, leg, 4)
   local tmax, ymin, ymax = 0, 0, 0
@@ -561,7 +561,7 @@ local function paint_time(gc, V)
     dashed(gc, false)
   end
   for i, c in ipairs(V.curves) do
-    col(gc, CURVE[i])
+    col(gc, c.col or CURVE[i])
     for k = 2, #c.t do gc:drawLine(X(c.t[k - 1]), Y(c.y[k - 1]), X(c.t[k]), Y(c.y[k])) end
   end
   -- marcas de la primera curva
@@ -572,8 +572,13 @@ local function paint_time(gc, V)
       col(gc, CURVE[1]); gc:fillArc(X(m.tp) - 3, Y(m.ymax) - 3, 6, 6, 0, 360)
       gc:drawString("Mp=" .. fmt(m.Mp, 3) .. "%", math.min(X(m.tp) + 4, W() - 60), Y(m.ymax) - 2, "top")
     end
+    local m2 = V.marks2
+    if m2 and m2.tp and m2.ymax then
+      col(gc, {0x00, 0x96, 0x20}); gc:fillArc(X(m2.tp) - 3, Y(m2.ymax) - 3, 6, 6, 0, 360)
+      gc:drawString("Mp=" .. fmt(m2.Mp, 3) .. "%", math.min(X(m2.tp) + 4, W() - 60), Y(m2.ymax) + 3, "top")
+    end
     if m.ts then
-      col(gc, CURVE[3]); dashed(gc, true)
+      col(gc, V.marks2 and C.grey or CURVE[3]); dashed(gc, true)
       gc:drawLine(X(m.ts), 21, X(m.ts), ly - 12)
       dashed(gc, false)
       gc:drawString("ts", X(m.ts) + 2, 22, "top")
@@ -819,6 +824,14 @@ function on.charIn(ch)
     local d = tonumber(ch)
     if d == 0 then d = 10 end
     if d and d >= 1 and d <= #MODULES then hsel = d; openmodule(d) end
+    return
+  end
+  -- en resultados: tecla s = simular la respuesta real (curva verde)
+  if screen == "result" and (ch == "s" or ch == "S") and rlines and rlines.cansim and not rerror then
+    VALS[cur]._sim = "1"
+    local keepcmp = cmpbase
+    compute()
+    VALS[cur]._sim = nil
     return
   end
   -- en resultados: tecla c = guardar como caso A y volver a editar

@@ -97,6 +97,10 @@ Módulo 8 → `K = 2`, `τ = 9`, `L = 1.5`, `MG = 3`, `MF = 60`, `factor Kp = 2`
 - **Teclas numéricas en el resultado**: envían el controlador o el modelo a otro módulo sin reescribirlo. Por ejemplo, en el módulo 7, `3` lleva a la respuesta LC y `6` a márgenes/Bode; en el módulo 9, `8` lleva a Sintonía.
 - **Entrenamiento (10)**: elija el `tipo` y el `nro` del ejercicio, presione enter para ver el enunciado, resuelva a mano, escriba r1..r3 y presione enter para corregir. Con `?` en r1 se muestra la solución.
 
+### Respuesta teórica y real (tecla `s`, módulos 3 y 7)
+
+El gráfico y(t) muestra en **azul** la respuesta **teórica**: el 2º orden con los polos deseados pd (módulo 7) o el modelo de polos dominantes (módulo 3). Al presionar **`s`** en el resultado, se simula la respuesta **real** del lazo cerrado completo, que incluye los ceros del controlador y los polos extra, y se dibuja en **verde** en el mismo gráfico, con el Mp de ambas curvas. El texto agrega el "Paso 11: comprobación por simulación" con la comparación con lo pedido.
+
 ### Comparar dos casos (tecla `c`, todos los módulos)
 
 Sirve para preguntas como "repita con K = 10 y compare" o "¿qué pasa si se duplica…?":

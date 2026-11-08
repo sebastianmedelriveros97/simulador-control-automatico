@@ -140,6 +140,15 @@ local function timeview(T, A, title, name)
   return V, m, st
 end
 
+local function shortmet(m)
+  local t = {}
+  t[#t + 1] = "Mp=" .. fmt(m.Mp or 0, 3) .. "%"
+  if m.tp then t[#t + 1] = "tp=" .. fmt(m.tp, 3) end
+  if m.ts2 then t[#t + 1] = "ts=" .. fmt(m.ts2, 3) end
+  if m.tr then t[#t + 1] = "tr=" .. fmt(m.tr, 3) end
+  return table.concat(t, " ")
+end
+
 local function metricstext(m)
   local t = {}
   if m.Mp then t[#t + 1] = "Mp = " .. fmt(m.Mp, 4) .. " %" end
@@ -429,6 +438,37 @@ local function m_polos(v)
   dyn_report(L, T, poles, zeros)
   do
     local V, m, st = timeview(T, A, (lazo == 1) and "Respuesta LC al escalon" or "Respuesta al escalon", "y(t), A = " .. fmt(A))
+    local dosim = (v._sim == "1")
+    -- curva teorica: modelo de 2o (o 1er) orden con los polos dominantes
+    do
+      local Tt = nil
+      if st and #poles >= 1 and abs(T.d[1]) > 1e-12 then
+        local dom = poles[1]
+        local nd = (dom[2] ~= 0) and 2 or 1
+        if #poles > nd or #zeros > 0 then
+          local dpp = {dom}
+          if nd == 2 then dpp[2] = {dom[1], -dom[2]} end
+          local den = pfromroots(dpp, 1)
+          Tt = rat({T.n[1] / T.d[1] * den[1]}, den)
+        end
+      end
+      if Tt then
+        L.cansim = true
+        local Vt, mt = timeview(Tt, A, "Teorica (azul) vs real (verde)", nil)
+        Vt.curves[1].name = nil
+        Vt.curves[1].col = {0x10, 0x40, 0xE0}
+        Vt.legend = {"azul teorica: " .. shortmet(mt)}
+        if dosim then
+          local rc = V.curves[1]
+          Vt.curves[2] = {t = rc.t, y = rc.y, col = {0x00, 0x96, 0x20}}
+          Vt.legend[#Vt.legend + 1] = "verde real:   " .. shortmet(m)
+          do local ym = -INF; for _, yv in ipairs(rc.y) do if yv > ym then ym = yv end end; Vt.marks2 = {Mp = m.Mp, tp = m.tp, ymax = ym} end
+        else
+          Vt.legend[#Vt.legend + 1] = "tecla s: agregar la respuesta real (verde)"
+        end
+        V = Vt
+      end
+    end
     if #poles >= 1 then
       local dom = poles[1]
       local nd = (dom[2] ~= 0) and 2 or 1
@@ -444,7 +484,10 @@ local function m_polos(v)
     end
     view(L, V)
     local S = {((lazo == 1) and "GLC = " or "G = ") .. rstr(T), "Polos: " .. rootsstr(poles, 4), (stabilitytext(poles))}
-    if st and m.yss then
+    if L.cansim and not dosim then
+      S[#S + 1] = "Tecla s: simular la respuesta real (verde) y compararla con la teorica (azul)"
+    end
+    if (dosim or not L.cansim) and st and m.yss and L.cansim then
       add(L, "== Simulacion exacta (fracciones parciales) ==")
       add(L, "y(" .. U.inf .. ") = " .. fmt(m.yss) .. ";  " .. metricstext(m))
       add(L, "(valores reales; las formulas de 2o orden son aproximaciones)")
@@ -490,14 +533,14 @@ local function m_polos(v)
           say(L, "El tiempo de asentamiento al 2% es ts(2%) = 4" .. TAU .. " = " .. fmt(4 * tau1, 4) .. " s, y al 5% es ts(5%) = 3" .. TAU .. " = " .. fmt(3 * tau1, 4) .. " s.")
           say(L, "Como el polo dominante es real, no hay sobrepaso: Mp = 0 %.")
         end
-        if m.Mp and #poles > 2 then
+        if dosim and m.Mp and #poles > 2 then
           say(L, "(Comprobacion con la respuesta exacta del sistema completo: " .. metricstext(m) .. ".)")
         end
         if m.yss then
           say(L, "El valor final ante el escalon es y(" .. U.inf .. ") = " .. fmt(m.yss) .. ".")
           metric(L, "yss", "y(" .. U.inf .. ")", m.yss)
           metric(L, "ess", "error escalon", A - m.yss)
-          if #poles > 2 and m.Mp then metric(L, "Mpreal", "Mp real (simulado)", m.Mp, "%") end
+          if dosim and #poles > 2 and m.Mp then metric(L, "Mpreal", "Mp real (simulado)", m.Mp, "%") end
         end
       end
     end
@@ -1675,10 +1718,37 @@ local function m_place(v)
   do
     local T = rat(pcopy(G0.n), padd(G0.d, G0.n))
     local V, m, st = timeview(T, 1, "Respuesta LC con Gc (escalon unitario)")
-    view(L, V)
+    local dosim = (v._sim == "1")
+    L.cansim = true
+    do
+      -- curva teorica: 2o orden puro con los polos deseados (misma ganancia estatica)
+      local w2 = sig * sig + wd * wd
+      local K0 = (st and m.yss) or 1
+      local Tt = rat({K0 * w2}, {w2, 2 * sig, 1})
+      local Vt, mt = timeview(Tt, 1, "Teorica (azul) vs real (verde)", nil)
+      Vt.curves[1].name = nil
+      Vt.curves[1].col = {0x10, 0x40, 0xE0}
+      Vt.legend = {"azul teorica: " .. shortmet(mt)}
+      if dosim then
+        local rc = V.curves[1]
+        Vt.curves[2] = {t = rc.t, y = rc.y, col = {0x00, 0x96, 0x20}}
+        Vt.legend[#Vt.legend + 1] = "verde real:   " .. shortmet(m)
+          do local ym = -INF; for _, yv in ipairs(rc.y) do if yv > ym then ym = yv end end; Vt.marks2 = {Mp = m.Mp, tp = m.tp, ymax = ym} end
+        local tmax = math.max(Vt.curves[1].t[#Vt.curves[1].t], rc.t[#rc.t])
+      else
+        Vt.legend[#Vt.legend + 1] = "tecla s: agregar la respuesta real (verde)"
+      end
+      view(L, Vt)
+    end
+    if not dosim then
+      sep(L, "Paso 11 (opcional): comprobacion por simulacion")
+      add(L, "Presione la tecla s para simular la respuesta REAL del lazo cerrado")
+      add(L, "(incluye el efecto del cero y del polo extra) y compararla con la teorica.")
+    else
     sep(L, "Paso 11: Comprobacion por simulacion")
     add(L, "Respuesta exacta del lazo cerrado (incluye el efecto de los ceros):")
-    if st and m.yss then
+    end
+    if dosim and st and m.yss then
       add(L, "y(" .. U.inf .. ") = " .. fmt(m.yss) .. ";  " .. metricstext(m))
       if Mp then add(L, "Mp real " .. fmt(m.Mp, 4) .. " % vs pedido " .. fmt(Mp) .. " %" .. ((m.Mp > Mp * 1.15 + 0.5) and "  (mayor: efecto del cero)" or "  " .. U.arrow .. " cumple aprox.")) end
       if ts and m.ts2 then
@@ -1696,7 +1766,8 @@ local function m_place(v)
     elseif (not useI) and nz == 1 then S[#S + 1] = "Kp = " .. fmt(Kc * zc) .. ",  Td = " .. fmt(1 / zc) .. " s" end
     S[#S + 1] = "Polos LC: " .. rootsstr(r, 4)
     S[#S + 1] = "ep = " .. fmt(e.ep) .. ",  ev = " .. fmt(e.ev)
-    if st and m.yss then S[#S + 1] = "Simulacion: " .. metricstext(m) end
+    if dosim and st and m.yss then S[#S + 1] = "Simulacion (real): " .. metricstext(m)
+    else S[#S + 1] = "Tecla s: simular la respuesta real (verde) vs teorica (azul)" end
     S[#S + 1] = "tab: plano s y respuesta y(t)"
     L.res = {phi = phi, a = zc or 0, Kc = Kc}
     do
@@ -1708,8 +1779,8 @@ local function m_place(v)
       if zc then metric(L, "a", "cero a", zc) end
       metric(L, "Kc", "Kc", Kc)
       metric(L, "ep", "ep (escalon)", e.ep)
-      if st and m.Mp then metric(L, "Mpreal", "Mp real", m.Mp, "%") end
-      if st and m.ts2 then metric(L, "tsreal", "ts(2%) real", m.ts2, "s") end
+      if dosim and st and m.Mp then metric(L, "Mpreal", "Mp real", m.Mp, "%") end
+      if dosim and st and m.ts2 then metric(L, "tsreal", "ts(2%) real", m.ts2, "s") end
     end
     do
       local wnn = sqrt(sig * sig + wd * wd)
@@ -1722,7 +1793,7 @@ local function m_place(v)
     if nz > 0 then say(L, "El cero del controlador se ubica en s = -" .. fmt(zc, 5) .. " y, por la condicion de magnitud, Kc = " .. fmt(Kc, 5) .. ".") end
     say(L, "El controlador obtenido es Gc(s) = " .. gcs .. ".")
     say(L, "Se verifica que los polos de lazo cerrado son " .. rootsstr(r, 4) .. ", que incluyen a pd; el sistema es " .. ((isstable(r)) and "estable." or "inestable."))
-    if st and m.yss then
+    if dosim and st and m.yss then
       if m.Mp then say(L, "Con el controlador, el sobrepaso maximo real es Mp = " .. fmt(m.Mp, 4) .. " %" .. (Mp and (" (pedido: " .. fmt(Mp) .. " %)") or "") .. ".") end
       if m.tp then say(L, "El tiempo de peak real es tp = " .. fmt(m.tp, 4) .. " s.") end
       if m.tr then say(L, "El tiempo de subida real es tr = " .. fmt(m.tr, 4) .. " s.") end
