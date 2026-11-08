@@ -360,7 +360,8 @@ local function m_polos(v)
       add(L, "(valores reales; las formulas de 2o orden son aproximaciones)")
       S[#S + 1] = "Real: " .. metricstext(m)
     end
-    chain(L, "4", 4, {Gc = v.Gc or "1", Gp = v.Gp, A = v.A or "1", k = v.k or ""}, "error estacionario de este lazo")
+    chain(L, "4", 4, {Gc = v.Gc or "1", Gp = v.Gp, A = v.A or "1", k = v.k or "", eobj = "", senal = "1"}, "error estacionario de este lazo")
+    chain(L, "5", 5, {P = "", Gc = v.Gc or "1", Gp = v.Gp, k = v.k or ""}, "Routh / estabilidad")
     chain(L, "6", 6, {Gc = v.Gc or "1", Gp = v.Gp, k = v.k or "", L = "0"}, "margenes / Bode de este lazo")
     summary(L, S)
   end
@@ -594,6 +595,9 @@ local function m_error(v)
   local e = sserrors(G0, A)
   errlines(L, e, A)
   add(L, "Parabola: r(t)=A t" .. U.sq .. "/2 (R=A/s" .. "\194\179" .. ")")
+  chain(L, "3", 3, {Gc = v.Gc or "1", Gp = v.Gp, lazo = "1", A = v.A or "1", k = v.k or ""}, "polos/respuesta LC")
+  chain(L, "5", 5, {P = "", Gc = v.Gc or "1", Gp = v.Gp, k = v.k or ""}, "Routh / estabilidad")
+  chain(L, "6", 6, {Gc = v.Gc or "1", Gp = v.Gp, L = "0", k = v.k or ""}, "margenes / Bode")
   summary(L, {
     "Tipo N = " .. e.N .. ";  lazo cerrado " .. (ok and "estable" or "NO estable"),
     "Kp = " .. fmt(e.Kp) .. "  " .. U.arrow .. " ep (escalon) = " .. fmt(e.ep),
@@ -606,6 +610,223 @@ end
 --------------------------------------------------------------------------
 -- 4) Routh-Hurwitz
 --------------------------------------------------------------------------
+
+--------------------------------------------------------------------------
+-- Routh-Hurwitz simbolico en k (P(s) = P0(s) + k P1(s)), paso a paso
+--------------------------------------------------------------------------
+local function ksimp(r)
+  local n, d = ptrim(pcopy(r.n)), ptrim(pcopy(r.d))
+  if piszero(n) then return rat({0}, {1}) end
+  if #d == 1 then
+    if d[1] < 0 then n = pscale(n, -1); d = {-d[1]} end
+    -- reducir por el MCD si todos los coeficientes son enteros
+    local function isint(x) return abs(x - math.floor(x + 0.5)) < 1e-9 * math.max(1, abs(x)) and abs(x) < 1e9 end
+    local allint = isint(d[1])
+    for i = 1, #n do if not isint(n[i]) then allint = false end end
+    if allint then
+      local function gcd(a, b) a, b = abs(a), abs(b) while b > 0.5 do a, b = b, a % b end return a end
+      local g = math.floor(d[1] + 0.5)
+      for i = 1, #n do g = gcd(g, math.floor(abs(n[i]) + 0.5)) end
+      if g > 1 then n = pscale(n, 1 / g); d = {d[1] / g} end
+    else
+      n = pscale(n, 1 / d[1]); d = {1}
+    end
+    if abs(d[1] - 1) < 1e-12 then d = {1} end
+    return rat(n, d)
+  end
+  local q = rsimplify(rat(n, d))
+  if #q.d == 1 then return ksimp(q) end
+  return q
+end
+
+-- polinomio en k en orden ascendente: 140 - 10k
+local function kpoly(p)
+  local parts = {}
+  for i = 1, #p do
+    local c = p[i]
+    if abs(c) > 1e-12 or #p == 1 then
+      local e = i - 1
+      local mag = abs(c)
+      local cs = (e > 0 and abs(mag - 1) < 1e-12) and "" or fmt(mag)
+      local term = (e == 0) and fmt(mag) or (cs .. "k" .. ((e > 1) and ("^" .. e) or ""))
+      if #parts == 0 then parts[1] = (c < 0 and "-" or "") .. term
+      else parts[#parts + 1] = (c < 0 and " - " or " + ") .. term end
+    end
+  end
+  if #parts == 0 then return "0" end
+  return table.concat(parts)
+end
+
+local function kstr(r)
+  local n, d = r.n, r.d
+  if #d == 1 then
+    if #n == 1 then return fmt(n[1] / d[1]) end
+    if abs(d[1] - 1) < 1e-12 then return kpoly(n) end
+    return "(" .. kpoly(n) .. ")/" .. fmt(d[1])
+  end
+  return "(" .. kpoly(n) .. ")/(" .. kpoly(d) .. ")"
+end
+
+-- con parentesis si es suma (para usar como factor)
+local function kfac(r)
+  local t = kstr(r)
+  if t:find(" [%+%-] ") then
+    if t:sub(1, 1) == "(" and t:find("%)/") then return "[" .. t .. "]" end
+    return "(" .. t .. ")"
+  end
+  if t:find("/") then return "[" .. t .. "]" end
+  return t
+end
+
+local function kzero(r) return piszero(ptrim(pcopy(r.n))) end
+
+-- intervalos (abiertos) donde r(k) > 0
+local function kpositive(r)
+  local pts = {}
+  local function addroots(p)
+    if #p > 1 then
+      for _, q in ipairs(proots(p)) do if q[2] == 0 then pts[#pts + 1] = q[1] end end
+    end
+  end
+  addroots(ptrim(pcopy(r.n))); addroots(ptrim(pcopy(r.d)))
+  table.sort(pts)
+  local u = {}
+  for _, x in ipairs(pts) do if #u == 0 or abs(x - u[#u]) > 1e-9 * math.max(1, abs(x)) then u[#u + 1] = x end end
+  local edges = {-INF}
+  for _, x in ipairs(u) do edges[#edges + 1] = x end
+  edges[#edges + 1] = INF
+  local out = {}
+  for i = 1, #edges - 1 do
+    local a, b = edges[i], edges[i + 1]
+    local t
+    if a == -INF and b == INF then t = 0
+    elseif a == -INF then t = b - math.max(1, abs(b))
+    elseif b == INF then t = a + math.max(1, abs(a))
+    else t = (a + b) / 2 end
+    local val = peval(r.n, t) / peval(r.d, t)
+    if val > 0 then
+      if #out > 0 and out[#out][2] == a and false then out[#out][2] = b else out[#out + 1] = {a, b} end
+    end
+  end
+  return out
+end
+
+local function kintersect(A, B)
+  local out = {}
+  for _, a in ipairs(A) do
+    for _, b in ipairs(B) do
+      local lo, hi = math.max(a[1], b[1]), math.min(a[2], b[2])
+      if lo < hi - 1e-12 then out[#out + 1] = {lo, hi} end
+    end
+  end
+  return out
+end
+
+local function ivtext(iv)
+  if #iv == 0 then return "ningun k" end
+  local t = {}
+  for _, x in ipairs(iv) do
+    local a, b = x[1], x[2]
+    if a == -INF and b == INF then t[#t + 1] = "todo k"
+    elseif a == -INF then t[#t + 1] = "k < " .. fmt(b, 6)
+    elseif b == INF then t[#t + 1] = "k > " .. fmt(a, 6)
+    else t[#t + 1] = fmt(a, 6) .. " < k < " .. fmt(b, 6) end
+  end
+  return table.concat(t, "  o  ")
+end
+
+-- agrega el desarrollo a L; devuelve los intervalos estables o nil si no aplica
+local function routh_k_steps(L, P0, P1)
+  local n = math.max(#P0, #P1) - 1
+  if n < 1 then return nil end
+  local coef = {}
+  for i = n + 1, 1, -1 do
+    coef[#coef + 1] = rat({P0[i] or 0, P1[i] or 0}, {1})
+  end
+  local w = math.floor(n / 2) + 1
+  local rows = {{}, {}}
+  for j = 1, w do
+    rows[1][j] = coef[2 * j - 1] or rat({0}, {1})
+    rows[2][j] = coef[2 * j] or rat({0}, {1})
+  end
+  local formulas = {}
+  for i = 3, n + 1 do
+    local A, B = rows[i - 2], rows[i - 1]
+    if kzero(B[1]) then return nil end
+    local C = {}
+    for j = 1, w do
+      local a2 = A[j + 1] or rat({0}, {1})
+      local b2 = B[j + 1] or rat({0}, {1})
+      C[j] = ksimp(rdiv(rsub(rmul(B[1], a2), rmul(A[1], b2)), B[1]))
+    end
+    rows[i] = C
+    formulas[i] = "s^" .. (n - i + 1) .. ": [" .. kfac(B[1]) .. "\194\183" .. kfac(A[2] or rat({0}, {1})) .. " - " .. kfac(A[1]) .. "\194\183" .. kfac(B[2] or rat({0}, {1})) .. "] / " .. kfac(B[1]) .. " = " .. kstr(C[1])
+  end
+  sep(L, "Paso 2: Tabla de Routh en funcion de k")
+  for i, r in ipairs(rows) do
+    local cells = {}
+    for j = 1, w do
+      if j == 1 or not kzero(r[j]) then cells[#cells + 1] = kstr(r[j]) end
+    end
+    add(L, "s^" .. (n - i + 1) .. " | " .. table.concat(cells, "    "))
+  end
+  add(L, "Cada fila nueva: c1 = (b1" .. "\194\183" .. "a2 - a1" .. "\194\183" .. "b2)/b1 (a = fila de 2 arriba, b = fila de arriba)")
+  for i = 3, n + 1 do add(L, "  " .. formulas[i]) end
+  sep(L, "Paso 3: Condicion: toda la 1a columna > 0")
+  local acc = {{-INF, INF}}
+  for i, r in ipairs(rows) do
+    local iv = kpositive(r[1])
+    local txt = "s^" .. (n - i + 1) .. ":  " .. kstr(r[1]) .. " > 0"
+    if #r[1].n == 1 and #r[1].d == 1 then
+      txt = txt .. ((#iv > 0) and "  (siempre)" or "  (NUNCA: inestable)")
+    else
+      txt = txt .. "  " .. U.arrow .. "  " .. ivtext(iv)
+    end
+    add(L, txt)
+    acc = kintersect(acc, iv)
+  end
+  sep(L, "Paso 4: Interseccion de las condiciones")
+  add(L, "Estable para: " .. ivtext(acc))
+  local phys = kintersect(acc, {{0, INF}})
+  if #phys > 0 then add(L, "Con k > 0 (ganancia fisica): " .. ivtext(phys)) end
+  -- limites: fila nula y polinomio auxiliar
+  local lims = {}
+  for _, x in ipairs(acc) do
+    if x[1] ~= -INF then lims[#lims + 1] = x[1] end
+    if x[2] ~= INF then lims[#lims + 1] = x[2] end
+  end
+  if #lims > 0 then
+    sep(L, "Paso 5: Limites (oscilacion sostenida)")
+    for _, kb in ipairs(lims) do
+      local found = false
+      for i = 2, #rows do
+        local v1 = peval(rows[i][1].n, kb) / peval(rows[i][1].d, kb)
+        if abs(v1) < 1e-7 * math.max(1, abs(kb)) and i >= 2 then
+          local pw = n - (i - 2) -- potencia de la fila de arriba
+          local up = rows[i - 1]
+          local aux = {}
+          for j = 1, w do
+            local e = pw - 2 * (j - 1)
+            if e >= 0 then aux[e + 1] = peval(up[j].n, kb) / peval(up[j].d, kb) end
+          end
+          for e = 1, pw + 1 do aux[e] = aux[e] or 0 end
+          aux = ptrim(aux)
+          if i == #rows then
+            add(L, "k = " .. fmt(kb, 6) .. ": se anula el termino s^0 " .. U.arrow .. " raiz en s = 0")
+          else
+            add(L, "k = " .. fmt(kb, 6) .. ": se anula la fila s^" .. (pw - 1) .. " " .. U.arrow .. " pol. auxiliar (fila s^" .. pw .. "):")
+            add(L, "  A(s) = " .. pstr(aux) .. " = 0  " .. U.arrow .. "  s = " .. rootsstr(proots(aux), 5))
+          end
+          found = true
+          break
+        end
+      end
+      if not found then add(L, "k = " .. fmt(kb, 6) .. ": cambia el signo de la 1a columna") end
+    end
+  end
+  return acc
+end
+
 local function charpoly(v, kk)
   if not blank(v.P) then
     local r = tf(v, "P", kk)
@@ -681,17 +902,24 @@ local function m_routh(v)
     local lin = true
     local chk = psub(psub(P2, P0), pscale(d1, 2))
     for i = 1, #chk do if abs(chk[i]) > 1e-9 * math.max(1, abs(P2[i] or 0)) then lin = false end end
-    sep(L, "Polinomio caracteristico en funcion de k")
+    sep(L, "Paso 1: Polinomio caracteristico en funcion de k")
+    add(L, "P(s) = den(Gc" .. "\194\183" .. "Gp) + num(Gc" .. "\194\183" .. "Gp) = 0")
     if lin then
-      add(L, "P(s) = " .. pstr(P0) .. "  +  k(" .. pstr(d1) .. ")")
+      add(L, "P(s) = " .. polyk_str(P0, d1))
     else
       add(L, "P(s) depende de k en forma no lineal")
       add(L, "P(s)|k=1 = " .. pstr(P1))
     end
-    sep(L, "Rango de k estable (Routh)")
+    sep(L, "Criterio de Routh-Hurwitz")
     add(L, "Se exige 1a columna de Routh > 0; los limites son los k donde")
     add(L, "un elemento se anula (polos sobre el eje j" .. W .. ").")
     local ivs, bounds = krange(function(kk) return charpoly(v, kk) end)
+    local symok = false
+    if lin then
+      local okc, acc = pcall(routh_k_steps, L, P0, d1)
+      symok = okc and acc ~= nil
+    end
+    if not symok then
     if #ivs == 0 then add(L, "Ningun k en [-1e5,1e5] estabiliza el lazo") end
     for _, iv in ipairs(ivs) do
       local a = (iv[1] == -INF) and ("-" .. U.inf) or fmt(iv[1], 6)
@@ -719,7 +947,8 @@ local function m_routh(v)
       end
       add(L, txt)
     end
-    add(L, "(ingrese k para ver la tabla de Routh)")
+    end -- not symok
+    add(L, "(ingrese un valor en k para ver la tabla numerica)")
     local S = {}
     for _, iv in ipairs(ivs) do
       local a = (iv[1] == -INF) and ("-" .. U.inf) or fmt(iv[1], 6)
@@ -727,6 +956,12 @@ local function m_routh(v)
       S[#S + 1] = "Estable para " .. a .. " < k < " .. b
     end
     if #S == 0 then S[1] = "Ningun k estabiliza el lazo" end
+    if blank(v.P) then
+      chain(L, "3", 3, {Gc = v.Gc or "k", Gp = v.Gp, lazo = "1", A = "1", k = v.k or ""}, "polos/respuesta LC (GLC en funcion de k si k vacio)")
+      chain(L, "4", 4, {Gc = v.Gc or "k", Gp = v.Gp, A = "1", k = v.k or "", eobj = "", senal = "1"}, "error estacionario")
+      chain(L, "6", 6, {Gc = v.Gc or "k", Gp = v.Gp, L = "0", k = v.k or ""}, "margenes / Bode")
+    end
+
     if lin then
       local okv, V = pcall(rlocus_view, P0, d1, bounds, nil)
       if okv then view(L, V); S[#S + 1] = "tab: lugar de raices" end
@@ -763,6 +998,12 @@ local function m_routh(v)
   add(L, (stabilitytext(roots)))
   do
     local S = {"Cambios de signo en 1a columna: " .. ch, (stabilitytext(roots))}
+    if blank(v.P) then
+      chain(L, "3", 3, {Gc = v.Gc or "k", Gp = v.Gp, lazo = "1", A = "1", k = v.k or ""}, "polos/respuesta LC (GLC en funcion de k si k vacio)")
+      chain(L, "4", 4, {Gc = v.Gc or "k", Gp = v.Gp, A = "1", k = v.k or "", eobj = "", senal = "1"}, "error estacionario")
+      chain(L, "6", 6, {Gc = v.Gc or "k", Gp = v.Gp, L = "0", k = v.k or ""}, "margenes / Bode")
+    end
+
     if hask then
       local P0, P1, P2 = charpoly(v, 0), charpoly(v, 1), charpoly(v, 2)
       local d1 = psub(P1, P0)
@@ -934,6 +1175,11 @@ local function m_freq(v)
     S[#S + 1] = m.gc[1] and (W .. "cg = " .. fmt(m.gc[1].w) .. " rad/s,  MF = " .. fmt(m.gc[1].MF, 4) .. DEG) or ("MF = " .. U.inf)
     S[#S + 1] = m.pc[1] and (W .. "cf = " .. fmt(m.pc[1].w) .. " rad/s,  MG = " .. fmt(m.pc[1].MG, 4) .. " (" .. fmt(db(m.pc[1].MG), 4) .. " dB)") or ("MG = " .. U.inf)
     S[#S + 1] = (mf > 0 and mg > 1) and "Lazo cerrado ESTABLE" or "Lazo cerrado INESTABLE"
+    if Ld == 0 then
+      chain(L, "3", 3, {Gc = v.Gc or "1", Gp = v.Gp, lazo = "1", A = "1", k = v.k or ""}, "polos/respuesta LC")
+      chain(L, "4", 4, {Gc = v.Gc or "1", Gp = v.Gp, A = "1", k = v.k or "", eobj = "", senal = "1"}, "error estacionario")
+      chain(L, "5", 5, {P = "", Gc = v.Gc or "1", Gp = v.Gp, k = v.k or ""}, "Routh / estabilidad")
+    end
     if Ld == 0 then
       local Vt, mt, st = timeview(closedloop(G0), 1, "Respuesta LC (escalon unitario)")
       view(L, Vt)

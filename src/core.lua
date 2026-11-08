@@ -328,7 +328,8 @@ function rootsstr(roots, d)
   for i, r in ipairs(roots) do
     if not skip[i] then
       if r[2] > 0 then
-        out[#out + 1] = fmt(r[1], d) .. " " .. U.pm .. " j" .. fmt(r[2], d)
+        if abs(r[1]) < 1e-11 then out[#out + 1] = U.pm .. "j" .. fmt(r[2], d)
+        else out[#out + 1] = fmt(r[1], d) .. " " .. U.pm .. " j" .. fmt(r[2], d) end
         for j = i + 1, #roots do
           if not skip[j] and abs(roots[j][2] + r[2]) < 1e-9 * math.max(1, r[2]) and abs(roots[j][1] - r[1]) < 1e-9 * math.max(1, abs(r[1])) then
             skip[j] = true; break

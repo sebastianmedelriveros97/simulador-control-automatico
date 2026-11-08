@@ -64,5 +64,12 @@ for d in "1234567890":
     g.on.charIn(d); g.on.enterKey(); paint()
     for _ in range(4): g.on.tabKey(); paint()
     g.on.escapeKey(); g.on.escapeKey(); g.on.escapeKey()
+# modulo 5 -> tecla 3 -> modulo 3 con los mismos datos
+g.on.charIn("5")
+g.on.arrowDown(); g.on.clearKey(); typ("k"); g.on.arrowDown(); g.on.clearKey(); typ("10/(s(s^2+7s+20))"); g.on.arrowDown(); g.on.clearKey()
+g.on.enterKey(); o5 = paint(); assert any("Routh" in x for x in o5), o5[:3]
+g.on.charIn("3"); o3 = paint(); assert o3[0].startswith("3."), o3[:3]
+assert any("4k" in x or "10k" in x for x in o3), o3[:12]
+print("tecla 3 desde modulo 5 OK")
 print("menu:", len(list(g.MENU.values())))
 print("OK UI")
